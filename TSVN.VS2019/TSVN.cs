@@ -63,6 +63,7 @@ namespace SamirBoulema.TSVN
         public const int lockImage = 0x0017;
         public const int unlock = 0x0018;
         public const int rename = 0x0019;
+        public const int unshelve = 0x001A;
         public const int Toolbar = 0x1000;
         public const int ToolbarGroup = 0x1050;
         public const int TSVNMenu = 0x1021;
