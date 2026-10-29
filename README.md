@@ -1,9 +1,6 @@
 # TSVN
 Control TortoiseSVN from within Visual Studio
 
-[![TSVN](https://github.com/unity3d-kr/TSVN/actions/workflows/workflow.yml/badge.svg)](https://github.com/unity3d-kr/TSVN/actions/workflows/workflow.yml)
-[![Sponsor](https://img.shields.io/badge/-Sponsor-fafbfc?logo=GitHub%20Sponsors)](https://github.com/sponsors/sboulema)
-
 This fork replaces the built-in Octicons with **TortoiseSVN's own XPStyle icon set**, so the extension looks like TortoiseSVN itself. The menu is named `TortoiseSVN` instead of `Tsvn`. See [Icon set](#icon-set).
 
 # Getting started
@@ -16,9 +13,7 @@ All the SVN functions quickly accessible from the `TortoiseSVN` menu. It is avai
 
 A customizable toolbar with all your favorite commands.
 
-A pending changes window with the most important commands:
-
-![Pending Changes](Resources/Screenshots/pendingchanges.png)
+A pending changes window with the most important commands.
 
 ## Icon set
 
