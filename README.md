@@ -37,7 +37,7 @@ Menu icons are taken from TortoiseSVN's XPStyle resources (`src/Resources/menu*.
 
 To change or add one: replace or append a 16x16 cell in the strip, declare its position with a new `<IDSymbol>` (next free value), extend `usedList`, then point the button's `<Icon id="..."/>` at that symbol. `TSVN.VS2019/TSVN.vsct` carries the same layout.
 
-The `TortoiseSVN` submenu itself has no icon. Visual Studio cannot render one: `VSCT.exe` silently discards `<Icon>` nested inside a `<Menu>` element, so this is a platform limitation rather than a missing feature. `Resources/TSVN.vsct` is an obsolete copy kept for history and is not compiled.
+The `TortoiseSVN` submenu itself has no icon. Visual Studio cannot render one: `VSCT.exe` silently discards `<Icon>` nested inside a `<Menu>` element, so this is a platform limitation rather than a missing feature.
 
 TortoiseSVN is licensed under the GPLv2, while this repository is MIT. Keep that in mind when redistributing the icon assets.
 
