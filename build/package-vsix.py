@@ -102,7 +102,9 @@ def collect(deps_dir, assembly):
 
 def build_package(out_path, meta, payload, vsix_size_hint, target_drive):
     """Write the VSIX. Sizes inside the catalog are informational, so a hint is enough."""
-    files = [{"fileName": "/" + name, "sha256": None} for name, _ in payload]
+    # The manifest lists every part it describes, including itself.
+    files = [{"fileName": "/extension.vsixmanifest", "sha256": None}]
+    files += [{"fileName": "/" + name, "sha256": None} for name, _ in payload]
 
     manifest_json = {
         "id": meta["id"],
