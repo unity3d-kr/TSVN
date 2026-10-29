@@ -1,37 +1,50 @@
 # TSVN
 Control TortoiseSVN from within Visual Studio
 
-[![TSVN](https://github.com/sboulema/TSVN/actions/workflows/workflow.yml/badge.svg)](https://github.com/sboulema/TSVN/actions/workflows/workflow.yml)
+[![TSVN](https://github.com/unity3d-kr/TSVN/actions/workflows/workflow.yml/badge.svg)](https://github.com/unity3d-kr/TSVN/actions/workflows/workflow.yml)
 [![Sponsor](https://img.shields.io/badge/-Sponsor-fafbfc?logo=GitHub%20Sponsors)](https://github.com/sponsors/sboulema)
+
+This fork replaces the built-in Octicons with **TortoiseSVN's own XPStyle icon set**, so the extension looks like TortoiseSVN itself. The menu is named `TortoiseSVN` instead of `Tsvn`. See [Icon set](#icon-set).
 
 # Getting started
 1. Install [TortoiseSVN](http://www.tortoisesvn.net) with "command line client tools"
 2. Install the [TSVN](https://marketplace.visualstudio.com/items?itemName=SamirBoulema.TSVN) extension
 3. Enjoy! 
 
-# Links
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=SamirBoulema.TSVN)
-
-[Github Releases](https://github.com/sboulema/TSVN/releases)
-
-[Open VSIX Gallery](http://vsixgallery.com/extension/07fd7462-cd4b-433b-9ab5-8ad3ad87bc65/)
-
 # Features
-All the SVN functions quickly accessible from the TSVN menu:
+All the SVN functions quickly accessible from the `TortoiseSVN` menu. It is available in the main menu bar and in the item context menu, and every command uses the same icon as its TortoiseSVN counterpart.
 
-![Main Menu](https://raw.githubusercontent.com/sboulema/TSVN/main/Resources/Screenshots/TSVN-main.png)
-
-When working on a single file you can find all SVN functions related to that file in the context menu:
-
-![Context Menu](https://raw.githubusercontent.com/sboulema/TSVN/main/Resources/Screenshots/tsvn-context.png)
-
-A customizable toolbar with all your favorite commands:
-
-![Toolbar](https://raw.githubusercontent.com/sboulema/TSVN/main/Resources/Screenshots/tsvn-toolbar.png)
+A customizable toolbar with all your favorite commands.
 
 A pending changes window with the most important commands:
 
-![Pending Changes](https://raw.githubusercontent.com/sboulema/TSVN/main/Resources/Screenshots/pendingchanges.png)
+![Pending Changes](Resources/Screenshots/pendingchanges.png)
+
+## Icon set
+
+Menu icons are taken from TortoiseSVN's XPStyle resources (`src/Resources/menu*.ico`) and packed into a single 16x16 bitmap strip, [`Resources/tsvn-menu-icons.png`](Resources/tsvn-menu-icons.png). The order of that strip is declared by the `usedList` attribute of the `<Bitmap>` element in `TSVN.VS2022/TSVN.vsct`:
+
+| # | Command | TortoiseSVN icon | # | Command | TortoiseSVN icon |
+|---:|---|---|---:|---|---|
+| 1 | `showChanges` | `menushowchanged` | 14 | `disk` | `explorer` |
+| 2 | `pull` | `menuupdate` | 15 | `switchImage` | `menuswitch` |
+| 3 | `push` | `menucommit` | 16 | `cleanup` | `menucleanup` |
+| 4 | `showLog` | `menulog` | 17 | `stash` | `menupatch` |
+| 5 | `revert` | `menurevert` | 18 | `fetch` | `menuupdate` |
+| 6 | `branch` | `menucopy` | 19 | `add` | `menuadd` |
+| 7 | `merge` | `menumerge` | 20 | `properties` | `menuproperties` |
+| 8 | `differences` | `menudiff` | 21 | `delete` | `menudelete` |
+| 9 | `blame` | `menublame` | 22 | `shelve` | `menushelve` |
+| 10 | `repo` | `menurepobrowse` | 23 | `lockImage` | `menulock` |
+| 11 | `resolve` | `menuresolve` | 24 | `unlock` | `menuunlock` |
+| 12 | `sync` | `sync` | 25 | `rename` | `menurename` |
+| 13 | `commit` | `menucommit` | 26 | `unshelve` | `menuunshelve` |
+
+To change or add one: replace or append a 16x16 cell in the strip, declare its position with a new `<IDSymbol>` (next free value), extend `usedList`, then point the button's `<Icon id="..."/>` at that symbol. `TSVN.VS2019/TSVN.vsct` carries the same layout.
+
+The `TortoiseSVN` submenu itself has no icon. Visual Studio cannot render one: `VSCT.exe` silently discards `<Icon>` nested inside a `<Menu>` element, so this is a platform limitation rather than a missing feature. `Resources/TSVN.vsct` is an obsolete copy kept for history and is not compiled.
+
+TortoiseSVN is licensed under the GPLv2, while this repository is MIT. Keep that in mind when redistributing the icon assets.
 
 ## Keyboard shortcuts
 
@@ -51,3 +64,12 @@ A pending changes window with the most important commands:
 * `(S)VN Unshelve` - Ctrl+Shift+Alt+S, P
 * `(S)VN L(o)ck` - Ctrl+Shift+Alt+S, O
 * `(S)VN Unloc(k)` - Ctrl+Shift+Alt+S, K
+
+# Links
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=SamirBoulema.TSVN)
+
+[Github Releases](https://github.com/unity3d-kr/TSVN/releases)
+
+[Open VSIX Gallery](http://vsixgallery.com/extension/ddccf913-105f-4243-80c6-16e9cc5bade5/)
+
+[TortoiseSVN source](https://svn.code.sf.net/p/tortoisesvn/code/trunk)
