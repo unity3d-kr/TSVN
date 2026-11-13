@@ -21,8 +21,8 @@ namespace SamirBoulema.TSVN.Diff
     /// position is handled by the line origin instead - and covers every other reason the two
     /// spaces can differ, not just zoom.
     ///
-    /// Only the gutter uses this. The overview bar places its marks at fractions of its own height,
-    /// so there is no second coordinate space for it to convert.
+    /// Only the gutter uses this. The overview bar takes its positions from the scroll bar, in the
+    /// scroll bar's own coordinates, so there is no second coordinate space for it to convert.
     /// </summary>
     public static class ViewScale
     {

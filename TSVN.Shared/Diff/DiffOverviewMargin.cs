@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.Windows;
+using System.Windows.Media;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Utilities;
@@ -15,13 +16,16 @@ namespace SamirBoulema.TSVN.Diff
     /// It is a passive view over <see cref="DiffChunkCache"/>: the gutter margin owns the
     /// controller, this one only paints what it finds there.
     ///
-    /// A mark sits at its line's fraction of the document, which is the mapping the scroll bar
-    /// itself uses: line n of a file of N lines is drawn at n / N of the bar. Collapsed outlining
-    /// regions are deliberately not part of it. Folding does move everything below it, so a mark
-    /// drifts by the height of the folds above it, but a bar this narrow is read as a map of the
-    /// file rather than as a second scroll bar, and reading fold state on every paint bought
-    /// nothing that survived the drift. The gutter is where exact positions matter, and it takes
-    /// them from the rendered lines.
+    /// Positions are not computed here at all. They are asked of the editor's own vertical scroll
+    /// bar through <see cref="IVerticalScrollBar.GetYCoordinateOfBufferPosition"/>, the function
+    /// that places its thumb. Collapsed outlining regions, the track between the arrow buttons,
+    /// the room the thumb takes and whatever mode the bar is in are all already part of that
+    /// mapping, so a mark lines up with the thumb by construction instead of by a model of the
+    /// scroll bar kept in sync with it. Two earlier versions modelled the folds themselves from
+    /// the outlining manager; both drifted, because the model was never quite the bar's.
+    ///
+    /// A folded change maps to the fold's position and comes out zero pixels tall, so it is drawn
+    /// at the minimum height there: the change is still visible, at the place the fold is.
     /// </summary>
     public sealed class DiffOverviewMargin : IWpfTextViewMargin
     {
@@ -31,20 +35,22 @@ namespace SamirBoulema.TSVN.Diff
         private const double MinimumMarkHeight = 2.0;
 
         private readonly IWpfTextView _textView;
+        private readonly IWpfTextViewMargin _container;
         private readonly ITextBuffer _buffer;
         private readonly MarkerStrip _strip;
 
+        private IVerticalScrollBar _scrollBar;
+        private IScrollMap _scrollMap;
         private DiffPalette _palette;
         private bool _disposed;
 
-        public DiffOverviewMargin(IWpfTextView textView)
+        public DiffOverviewMargin(IWpfTextView textView, IWpfTextViewMargin container)
         {
             _textView = textView;
+            _container = container;
             _buffer = textView.TextBuffer;
 
-            // Stretched rather than measured: the strip follows the height of the margin container,
-            // which is the height the scroll bar is given, so a fraction of the strip is a fraction
-            // of the bar with nothing to convert in between.
+            // Stretched to the margin container, which is the height the scroll bar is given too.
             _strip = new MarkerStrip(
                 StripWidth,
                 0.0,
@@ -53,8 +59,9 @@ namespace SamirBoulema.TSVN.Diff
                 false,
                 VerticalAlignment.Stretch);
 
+            _strip.Element.SizeChanged += OnStripSizeChanged;
+
             _textView.LayoutChanged += OnLayoutChanged;
-            _textView.ViewportHeightChanged += OnViewportHeightChanged;
             _textView.BackgroundBrushChanged += OnBackgroundBrushChanged;
             _textView.Closed += OnTextViewClosed;
 
@@ -93,13 +100,24 @@ namespace SamirBoulema.TSVN.Diff
 
             _disposed = true;
 
+            _strip.Element.SizeChanged -= OnStripSizeChanged;
+
             _textView.LayoutChanged -= OnLayoutChanged;
-            _textView.ViewportHeightChanged -= OnViewportHeightChanged;
             _textView.BackgroundBrushChanged -= OnBackgroundBrushChanged;
             _textView.Closed -= OnTextViewClosed;
 
             DiffChunkCache.Changed -= OnChunksChanged;
             DiffMarkersState.Changed -= OnStateChanged;
+
+            if (_scrollBar != null)
+            {
+                _scrollBar.TrackSpanChanged -= OnScrollBarChanged;
+            }
+
+            if (_scrollMap != null)
+            {
+                _scrollMap.MappingChanged -= OnScrollBarChanged;
+            }
 
             _strip.Clear();
 
@@ -122,10 +140,17 @@ namespace SamirBoulema.TSVN.Diff
             Render();
         }
 
-        private void OnViewportHeightChanged(object sender, EventArgs e)
+        private void OnStripSizeChanged(object sender, SizeChangedEventArgs e)
         {
-            // The strip is stretched to the container, so a resize changes the height every mark is
-            // a fraction of without a single line coordinate moving.
+            if (e.HeightChanged)
+            {
+                Render();
+            }
+        }
+
+        private void OnScrollBarChanged(object sender, EventArgs e)
+        {
+            // The track moved or resized, or the map changed: a fold, an edit, a mode switch.
             Render();
         }
 
@@ -136,7 +161,21 @@ namespace SamirBoulema.TSVN.Diff
 
         private void OnChunksChanged(object sender, ITextBuffer buffer)
         {
-            if (!ReferenceEquals(buffer, _buffer))
+            if (ReferenceEquals(buffer, _buffer))
+            {
+                Render();
+            }
+        }
+
+        private void OnLayoutChanged(object sender, TextViewLayoutChangedEventArgs e)
+        {
+            // Scrolling is by far the most frequent layout and moves no mark, so it is skipped.
+            // What does move them: the text (edit snapshot), the folds (visual snapshot - the
+            // elision buffer gets a new snapshot whenever a region collapses or expands), and the
+            // first layout, before which the scroll bar does not exist yet.
+            if (_scrollBar != null
+                && ReferenceEquals(e.OldViewState.EditSnapshot, e.NewViewState.EditSnapshot)
+                && ReferenceEquals(e.OldViewState.VisualSnapshot, e.NewViewState.VisualSnapshot))
             {
                 return;
             }
@@ -144,11 +183,37 @@ namespace SamirBoulema.TSVN.Diff
             Render();
         }
 
-        private void OnLayoutChanged(object sender, TextViewLayoutChangedEventArgs e)
+        /// <summary>
+        /// The editor's vertical scroll bar, found through the margin container this strip lives in.
+        ///
+        /// Looked up on demand: this margin is ordered before the scroll bar, so the container
+        /// creates it first and the scroll bar does not exist yet when the constructor runs.
+        /// </summary>
+        private IVerticalScrollBar ResolveScrollBar()
         {
-            // Scrolling raises this too, and moves nothing here: Apply rewrites only the rectangles
-            // whose position or colour changed, and no line number did.
-            Render();
+            if (_scrollBar != null || _container == null)
+            {
+                return _scrollBar;
+            }
+
+            var scrollBar = _container.GetTextViewMargin(PredefinedMarginNames.VerticalScrollBar) as IVerticalScrollBar;
+
+            if (scrollBar == null)
+            {
+                return null;
+            }
+
+            _scrollBar = scrollBar;
+            _scrollBar.TrackSpanChanged += OnScrollBarChanged;
+
+            _scrollMap = scrollBar.Map;
+
+            if (_scrollMap != null)
+            {
+                _scrollMap.MappingChanged += OnScrollBarChanged;
+            }
+
+            return _scrollBar;
         }
 
         private void Render()
@@ -165,41 +230,113 @@ namespace SamirBoulema.TSVN.Diff
                 : null;
 
             var height = _strip.Element.ActualHeight;
-            var lines = _textView.TextSnapshot.LineCount;
+            var snapshot = _textView.TextSnapshot;
 
-            if (chunks != null && chunks.Count > 0 && height > 0.0 && lines > 1)
+            if (chunks != null && chunks.Count > 0 && height > 0.0 && snapshot.LineCount > 0)
             {
                 if (_palette == null)
                 {
                     _palette = DiffColorProvider.For(_textView.Background);
                 }
 
-                var palette = _palette;
-                var perLine = height / lines;
+                var scrollBar = ResolveScrollBar();
 
-                for (var i = 0; i < chunks.Count; i++)
+                if (scrollBar != null)
                 {
-                    var chunk = chunks[i];
-                    var startLine = chunk.StartLine - 1;
-                    var endLine = chunk.EndLine - 1;
-
-                    var top = startLine * perLine;
-                    var markHeight = Math.Max(MinimumMarkHeight, (endLine - startLine + 1) * perLine);
-
-                    if (top + markHeight > height)
-                    {
-                        top = Math.Max(0.0, height - markHeight);
-                    }
-
-                    marks.Add(new MarkerRect(
-                        top,
-                        markHeight,
-                        palette.ForKind(chunk.Kind),
-                        null));
+                    AddMappedMarks(marks, chunks, snapshot, scrollBar, height);
+                }
+                else
+                {
+                    AddProportionalMarks(marks, chunks, snapshot.LineCount, height);
                 }
             }
 
             _strip.Apply(marks);
+        }
+
+        /// <summary>Every mark placed where the scroll bar puts the same buffer position.</summary>
+        private void AddMappedMarks(
+            List<MarkerRect> marks,
+            IReadOnlyList<DiffChunk> chunks,
+            ITextSnapshot snapshot,
+            IVerticalScrollBar scrollBar,
+            double height)
+        {
+            // The scroll bar answers in its own coordinates. Both are children of the same
+            // container, so this is normally a no-op, but one transform per paint keeps the marks
+            // right if the bar is ever offset or scaled relative to the strip.
+            var toStrip = TransformToStrip(scrollBar);
+            var lastLine = snapshot.LineCount - 1;
+
+            for (var i = 0; i < chunks.Count; i++)
+            {
+                var chunk = chunks[i];
+
+                // The chunks can trail the snapshot by one edit; a line past the end is clamped
+                // rather than thrown on, and the next chunk update corrects it.
+                var startLine = Math.Min(Math.Max(chunk.StartLine - 1, 0), lastLine);
+                var endLine = Math.Min(Math.Max(chunk.EndLine - 1, startLine), lastLine);
+
+                var start = snapshot.GetLineFromLineNumber(startLine).Start;
+                var end = snapshot.GetLineFromLineNumber(endLine).EndIncludingLineBreak;
+
+                var top = ToStrip(toStrip, scrollBar.GetYCoordinateOfBufferPosition(start));
+                var bottom = ToStrip(toStrip, scrollBar.GetYCoordinateOfBufferPosition(end));
+
+                AddMark(marks, chunk, top, bottom, height);
+            }
+        }
+
+        /// <summary>Fallback for a view without a vertical scroll bar: the line's fraction of the file.</summary>
+        private void AddProportionalMarks(List<MarkerRect> marks, IReadOnlyList<DiffChunk> chunks, int lineCount, double height)
+        {
+            var perLine = height / lineCount;
+
+            for (var i = 0; i < chunks.Count; i++)
+            {
+                var chunk = chunks[i];
+
+                AddMark(marks, chunk, (chunk.StartLine - 1) * perLine, chunk.EndLine * perLine, height);
+            }
+        }
+
+        private void AddMark(List<MarkerRect> marks, DiffChunk chunk, double top, double bottom, double height)
+        {
+            var markHeight = Math.Max(MinimumMarkHeight, bottom - top);
+
+            if (top + markHeight > height)
+            {
+                top = height - markHeight;
+            }
+
+            top = Math.Max(0.0, top);
+
+            marks.Add(new MarkerRect(top, markHeight, _palette.ForKind(chunk.Kind), null));
+        }
+
+        private GeneralTransform TransformToStrip(IVerticalScrollBar scrollBar)
+        {
+            var margin = scrollBar as IWpfTextViewMargin;
+
+            if (margin == null || margin.VisualElement == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return margin.VisualElement.TransformToVisual(_strip.Element);
+            }
+            catch (InvalidOperationException)
+            {
+                // Not in the same visual tree yet; the bar's own coordinates are the best guess.
+                return null;
+            }
+        }
+
+        private static double ToStrip(GeneralTransform transform, double y)
+        {
+            return transform == null ? y : transform.Transform(new Point(0.0, y)).Y;
         }
     }
 
@@ -214,7 +351,7 @@ namespace SamirBoulema.TSVN.Diff
     {
         public IWpfTextViewMargin CreateMargin(IWpfTextViewHost wpfTextViewHost, IWpfTextViewMargin marginContainer)
         {
-            return new DiffOverviewMargin(wpfTextViewHost.TextView);
+            return new DiffOverviewMargin(wpfTextViewHost.TextView, marginContainer);
         }
     }
 }

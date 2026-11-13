@@ -282,7 +282,7 @@ namespace SamirBoulema.TSVN.Diff
                 // stay wrong until something forced a recalculation.
                 var scale = ViewScale.Resolve(_textView, _canvas);
                 var canvasHeight = ViewScale.ToCanvas(viewportHeight, scale);
-                var shift = -ResolveOrigin(visible, _textView.ViewportTop, viewportHeight);
+                var shift = -ResolveOrigin(lines, _textView.ViewportTop);
 
                 if (chunks != null && chunks.Count > 0 && visible.Count > 0)
                 {
@@ -332,53 +332,39 @@ namespace SamirBoulema.TSVN.Diff
         }
 
         /// <summary>
-        /// Decides which origin the line coordinates are measured from.
+        /// The coordinate the line extents are measured from: the value that has to be subtracted
+        /// from <see cref="ITextViewLine.Top"/> to get a distance from the top of the viewport.
         ///
-        /// The documented contract says <see cref="ITextViewLine.Top"/> is relative to the top of
-        /// the viewport, but the WPF editor lays its lines out inside a scrolled canvas, where the
-        /// same number is relative to the document instead. Getting this wrong puts every marker
-        /// at a document-sized offset, which simply looks like nothing was drawn.
+        /// Decided by a fact the editor guarantees rather than by a guess: the first visible line
+        /// is, by definition, the line that contains the top edge of the viewport. Whichever
+        /// candidate origin falls inside that line's extent is the space the extents are in.
         ///
-        /// Rather than guess from a single line - the editor also renders a line or two beyond
-        /// each edge, which breaks any "the first line must be at zero" check - both candidate
-        /// origins are tried and the one that leaves more rendered lines inside the viewport wins.
+        /// The previous version counted how many lines each origin put on screen and kept 0 on a
+        /// tie. A short document - which is what collapsing a large region produces - fits on
+        /// screen from either origin, so the tie went to 0 and every marker dropped by exactly
+        /// ViewportTop, landing in the empty space below the last line.
         /// </summary>
-        private static double ResolveOrigin(IReadOnlyList<LineSpan> visible, double viewportTop, double viewportHeight)
+        private static double ResolveOrigin(ITextViewLineCollection lines, double viewportTop)
         {
-            if (visible.Count == 0 || viewportTop == 0.0 || viewportHeight <= 0.0)
+            var first = lines.FirstVisibleLine;
+
+            if (first == null)
+            {
+                return viewportTop;
+            }
+
+            if (viewportTop >= first.Top && viewportTop < first.Bottom)
+            {
+                return viewportTop;
+            }
+
+            if (0.0 >= first.Top && 0.0 < first.Bottom)
             {
                 return 0.0;
             }
 
-            var viewportRelative = CountLinesInViewport(visible, 0.0, viewportHeight);
-
-            if (viewportRelative == visible.Count)
-            {
-                return 0.0; // already consistent with the top of the viewport
-            }
-
-            var documentRelative = CountLinesInViewport(visible, viewportTop, viewportHeight);
-
-            return documentRelative > viewportRelative ? viewportTop : 0.0;
-        }
-
-        /// <summary>How many rendered lines would fall inside the viewport with the given origin.</summary>
-        private static int CountLinesInViewport(IReadOnlyList<LineSpan> visible, double origin, double viewportHeight)
-        {
-            var count = 0;
-
-            for (var i = 0; i < visible.Count; i++)
-            {
-                var top = visible[i].Top - origin;
-                var bottom = visible[i].Bottom - origin;
-
-                if (bottom > 0.0 && top < viewportHeight)
-                {
-                    count++;
-                }
-            }
-
-            return count;
+            // Neither: an inconsistent collection mid layout. The documented space is the safe one.
+            return viewportTop;
         }
 
         private void RestartRetry()

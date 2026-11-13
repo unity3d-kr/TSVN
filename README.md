@@ -131,13 +131,18 @@ line instead - the line the editor keeps on screen in place of the folded text -
 any other hidden run on the same header. A run that is merely scrolled out of view produces
 nothing, so there is never a mark floating in the empty space below the end of the file.
 
-The overview bar does **not** model folds. A mark sits at its line's fraction of the document,
-`line / lineCount`, which is the bar's own mapping, and nothing is read from the outlining manager
-while painting. Folding a region does move the lines below it, so a mark drifts by the height of
-the folds above it - but four pixels is read as a map of the file rather than as a second scroll
-bar, and the gutter, where a mark has to sit exactly on its line, still resolves folds from the
-rendered lines. Two attempts at making this bar fold-aware both landed further from the thumb than
-the plain fraction does, and both cost a manager lookup per paint.
+The overview bar does not model folds at all: it asks the editor's own vertical scroll bar.
+`IVerticalScrollBar.GetYCoordinateOfBufferPosition` is the function that places the thumb, so the
+collapsed regions, the track between the arrow buttons and the room the thumb takes are already
+part of the answer, and a mark lines up with the thumb by construction. A change inside a fold maps
+to the fold's position and is drawn there at the minimum height. Two earlier versions rebuilt that
+mapping from the outlining manager and both drifted, because a model of the scroll bar is never
+quite the scroll bar. Scrolling does not repaint the bar - only an edit, a fold, or a resize does.
+
+The gutter takes its origin from the first visible line, which by definition contains the top of
+the viewport. Counting how many lines each candidate origin puts on screen, which it used to do,
+ties on a short document - exactly what collapsing a large region produces - and the tie dropped
+every marker by `ViewportTop` into the empty space below the code.
 
 Both bars are repainted by moving the rectangles that are already on screen rather than rebuilding
 them, because an empty strip inside a single frame is what reads as a flicker while scrolling.
@@ -152,8 +157,8 @@ canvas, which cancels the scroll position and works for any cause, not just zoom
 every render rather than remembered: the zoom is often already restored from the previous session
 when the view opens, so there is no change to react to and a value cached at 100 % would stay wrong.
 
-The overview bar needs none of this. It places marks at fractions of its own height, so there is no
-coordinate space to convert - only the gutter mixes the two spaces and has to measure the scale.
+The overview bar needs none of this. Its positions come from the scroll bar, in the scroll bar's
+own coordinates, so there is no text-view space for it to convert.
 
 ### Options
 
