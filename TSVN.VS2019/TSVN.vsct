@@ -145,6 +145,18 @@
         <Parent guid="guidTSVNCmdSet" id="Toolbar" />
       </Group>
 
+      <!--File scoped buttons, hidden until the user asks for them. Three groups rather than
+          one so the shell draws a divider between looking, changing and locking.-->
+      <Group guid="guidTSVNCmdSet" id="fileHistoryToolbarGroup" priority="0x0600">
+        <Parent guid="guidTSVNCmdSet" id="Toolbar" />
+      </Group>
+      <Group guid="guidTSVNCmdSet" id="fileEditToolbarGroup" priority="0x0700">
+        <Parent guid="guidTSVNCmdSet" id="Toolbar" />
+      </Group>
+      <Group guid="guidTSVNCmdSet" id="fileLockToolbarGroup" priority="0x0800">
+        <Parent guid="guidTSVNCmdSet" id="Toolbar" />
+      </Group>
+
       <Group guid="guidTSVNCmdSet" id="TSVNWindowMenuGroup" priority="0x0000">
         <Parent guid="guidTSVNCmdSet" id="TSVNWindowMenu"/>
       </Group>
@@ -454,6 +466,155 @@
           <ButtonText>Options</ButtonText>
         </Strings>
       </Button>
+
+      <!--File toolbar buttons.
+
+          Each one is a command id of its own, not a second placement of the context menu
+          command: visibility belongs to the command and applies everywhere it is placed, so
+          sharing the id would take the context menu entry away with the toolbar button.
+
+          DefaultInvisible and DynamicVisibility are what make the visibility constraint in
+          the VisibilityConstraints section below take effect. Off by default, on when the
+          user ticks the toolbar switch in TortoiseSVN > Windows > Options.-->
+      <Button guid="guidTSVNCmdSet" id="toolbarShowLogCommand" priority="0x0100" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileHistoryToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="showLog" />
+        <Strings>
+          <ButtonText>Show Log for File...</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarBlameCommand" priority="0x0200" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileHistoryToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="blame" />
+        <Strings>
+          <ButtonText>Blame...</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarDifferencesCommand" priority="0x0300" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileHistoryToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="differences" />
+        <Strings>
+          <ButtonText>Show Differences</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarDiffPreviousCommand" priority="0x0400" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileHistoryToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="differences" />
+        <Strings>
+          <ButtonText>Diff with Previous Version</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarPropertiesCommand" priority="0x0500" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileHistoryToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="properties" />
+        <Strings>
+          <ButtonText>Properties...</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarDiffMarkersCommand" priority="0x0600" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileHistoryToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="diffMarkers" />
+        <Strings>
+          <ButtonText>Show Diff Markers</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarUpdateCommand" priority="0x0100" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileEditToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="pull" />
+        <Strings>
+          <ButtonText>Update File...</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarCommitCommand" priority="0x0200" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileEditToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="commit" />
+        <Strings>
+          <ButtonText>Commit File...</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarRevertCommand" priority="0x0300" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileEditToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="revert" />
+        <Strings>
+          <ButtonText>Revert File...</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarAddCommand" priority="0x0400" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileEditToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="add" />
+        <Strings>
+          <ButtonText>Add File</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarDeleteCommand" priority="0x0500" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileEditToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="delete" />
+        <Strings>
+          <ButtonText>Delete File</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarRenameCommand" priority="0x0600" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileEditToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="rename" />
+        <Strings>
+          <ButtonText>Rename File</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarLockCommand" priority="0x0100" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileLockToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="lockImage" />
+        <Strings>
+          <ButtonText>Get Lock</ButtonText>
+        </Strings>
+      </Button>
+
+      <Button guid="guidTSVNCmdSet" id="toolbarUnlockCommand" priority="0x0200" type="Button">
+        <Parent guid="guidTSVNCmdSet" id="fileLockToolbarGroup" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Icon guid="guidImages" id="unlock" />
+        <Strings>
+          <ButtonText>Release Lock</ButtonText>
+        </Strings>
+      </Button>
     </Buttons>
 
     <!--Menu icons-->
@@ -467,6 +628,30 @@
 
   <!-- Options is deliberately not placed in fourthContextMenuGroup: the file context menu is
        short and the dialog is reachable from TortoiseSVN > Windows in the main menu bar. -->
+
+  <!--The file toolbar buttons are visible only while their own UI context is active.
+
+      Visual Studio cannot hide a button that is already on a top level toolbar: it disables
+      it instead. A visibility constraint is evaluated while the toolbar is built, so a
+      command that carries one is simply not drawn until the context exists. ToolbarState
+      raises and drops that context from %LOCALAPPDATA%\TSVN\toolbar.json, which is what makes
+      "off by default, on when asked" work without a restart.-->
+  <VisibilityConstraints>
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarShowLogCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarBlameCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarDifferencesCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarDiffPreviousCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarPropertiesCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarDiffMarkersCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarUpdateCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarCommitCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarRevertCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarAddCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarDeleteCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarRenameCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarLockCommand" context="guidTSVNFileToolbarContext" />
+    <VisibilityItem guid="guidTSVNCmdSet" id="toolbarUnlockCommand" context="guidTSVNFileToolbarContext" />
+  </VisibilityConstraints>
 
   <KeyBindings>
     <KeyBinding guid="guidTSVNCmdSet" key1="S" key2="C" mod1="CONTROL SHIFT ALT" editor="guidVSStd97" id="commitCommand" />
@@ -519,10 +704,18 @@
     </GuidSymbol>
 
     <GuidSymbol name="guidTSVNPkg" value="{f2e68d5a-c95e-4d53-bbc6-072ff3ed9c53}" />
+
+    <!--The context that gates the file toolbar buttons. ToolbarState raises it; the value
+        here and the one in ToolbarState.cs have to stay identical.-->
+    <GuidSymbol name="guidTSVNFileToolbarContext" value="{b3e7c1d4-9a2f-4f68-8c05-7d1e6a92b4f3}" />
+
 	  
     <GuidSymbol name="guidTSVNCmdSet" value="{65ab72da-3aa4-4e36-8182-b3dbe7ff6b56}">
       <IDSymbol name="Toolbar" value="0x1000" />
       <IDSymbol name="ToolbarGroup" value="0x1050" />
+      <IDSymbol name="fileHistoryToolbarGroup" value="0x1051" />
+      <IDSymbol name="fileEditToolbarGroup" value="0x1052" />
+      <IDSymbol name="fileLockToolbarGroup" value="0x1053" />
       
       <IDSymbol name="TSVNMenu" value="0x1021" />
       <IDSymbol name="firstMenuGroup" value="0x1020" />
@@ -592,6 +785,22 @@
       <IDSymbol name="toggleDiffMarkersCommand" value="0x0618" />
       
       <IDSymbol name="showOptionsDialogCommand" value="0x0614"/>
+
+      <!--File toolbar buttons. Deliberately separate from the context menu ids above.-->
+      <IDSymbol name="toolbarShowLogCommand" value="0x0700" />
+      <IDSymbol name="toolbarBlameCommand" value="0x0701" />
+      <IDSymbol name="toolbarDifferencesCommand" value="0x0702" />
+      <IDSymbol name="toolbarDiffPreviousCommand" value="0x0703" />
+      <IDSymbol name="toolbarPropertiesCommand" value="0x0704" />
+      <IDSymbol name="toolbarDiffMarkersCommand" value="0x0705" />
+      <IDSymbol name="toolbarUpdateCommand" value="0x0706" />
+      <IDSymbol name="toolbarCommitCommand" value="0x0707" />
+      <IDSymbol name="toolbarRevertCommand" value="0x0708" />
+      <IDSymbol name="toolbarAddCommand" value="0x0709" />
+      <IDSymbol name="toolbarDeleteCommand" value="0x070A" />
+      <IDSymbol name="toolbarRenameCommand" value="0x070B" />
+      <IDSymbol name="toolbarLockCommand" value="0x070C" />
+      <IDSymbol name="toolbarUnlockCommand" value="0x070D" />
 
       <!--Windows Menu-->
       <IDSymbol name="TSVNWindowMenu" value="0x2000"/>

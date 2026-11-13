@@ -33,6 +33,13 @@ namespace SamirBoulema.TSVN
 
             await this.RegisterCommandsAsync();
 
+            // Puts the file buttons back on the toolbar if they were switched on last time.
+            // The command table cannot express "on for this user", so the state lives in
+            // %LOCALAPPDATA%\TSVN\toolbar.json and is replayed into the shell here.
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
+
+            ToolbarState.Apply();
+
             VS.Events.ProjectItemsEvents.AfterAddProjectItems += ProjectItemsEvents_AfterAddProjectItems;
             VS.Events.ProjectItemsEvents.AfterRenameProjectItems += ProjectItemsEvents_AfterRenameProjectItems;
             VS.Events.ProjectItemsEvents.AfterRemoveProjectItems += ProjectItemsEvents_AfterRemoveProjectItems;

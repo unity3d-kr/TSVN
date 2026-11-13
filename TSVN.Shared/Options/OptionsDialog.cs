@@ -27,6 +27,15 @@ namespace SamirBoulema.TSVN.Options
             showOverviewBarCheckBox.CheckedChanged += (sender, args) =>
                 DiffMarkersState.ShowOverviewBar = showOverviewBarCheckBox.Checked;
 
+            // Applied as it is ticked: the toolbar is rebuilt from the command table when the
+            // UI context behind these buttons changes, so there is nothing to wait for.
+            showFileToolbarCheckBox.CheckedChanged += (sender, args) =>
+            {
+                ThreadHelper.ThrowIfNotOnUIThread();
+
+                ToolbarState.ShowFileButtons = showFileToolbarCheckBox.Checked;
+            };
+
             Load += new EventHandler(OptionsDialog_Load);
         }
 
@@ -34,6 +43,7 @@ namespace SamirBoulema.TSVN.Options
         {
             ignoreWhitespaceCheckBox.Checked = DiffMarkersState.IgnoreWhitespace;
             showOverviewBarCheckBox.Checked = DiffMarkersState.ShowOverviewBar;
+            showFileToolbarCheckBox.Checked = ToolbarState.ShowFileButtons;
 
             LoadDialog().FireAndForget();
         }

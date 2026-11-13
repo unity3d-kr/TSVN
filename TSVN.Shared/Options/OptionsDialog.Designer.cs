@@ -43,7 +43,10 @@
             this.groupBox2 = new System.Windows.Forms.GroupBox();
             this.ignoreWhitespaceCheckBox = new System.Windows.Forms.CheckBox();
             this.showOverviewBarCheckBox = new System.Windows.Forms.CheckBox();
+            this.groupBox3 = new System.Windows.Forms.GroupBox();
+            this.showFileToolbarCheckBox = new System.Windows.Forms.CheckBox();
             this.groupBox1.SuspendLayout();
+            this.groupBox3.SuspendLayout();
             this.SuspendLayout();
             // 
             // label1
@@ -78,7 +81,7 @@
             // okButton
             // 
             this.okButton.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.okButton.Location = new System.Drawing.Point(228, 291);
+            this.okButton.Location = new System.Drawing.Point(228, 351);
             this.okButton.Name = "okButton";
             this.okButton.Size = new System.Drawing.Size(75, 23);
             this.okButton.TabIndex = 3;
@@ -89,7 +92,7 @@
             // cancelButton
             // 
             this.cancelButton.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.cancelButton.Location = new System.Drawing.Point(309, 291);
+            this.cancelButton.Location = new System.Drawing.Point(309, 351);
             this.cancelButton.Name = "cancelButton";
             this.cancelButton.Size = new System.Drawing.Size(75, 23);
             this.cancelButton.TabIndex = 4;
@@ -184,13 +187,34 @@
             this.showOverviewBarCheckBox.Text = "Also mark changed regions next to the scroll bar";
             this.showOverviewBarCheckBox.UseVisualStyleBackColor = true;
             // 
+            // groupBox3
+            // 
+            this.groupBox3.Controls.Add(this.showFileToolbarCheckBox);
+            this.groupBox3.Location = new System.Drawing.Point(12, 284);
+            this.groupBox3.Name = "groupBox3";
+            this.groupBox3.Size = new System.Drawing.Size(372, 55);
+            this.groupBox3.TabIndex = 11;
+            this.groupBox3.TabStop = false;
+            this.groupBox3.Text = "Toolbar";
+            // 
+            // showFileToolbarCheckBox
+            // 
+            this.showFileToolbarCheckBox.AutoSize = true;
+            this.showFileToolbarCheckBox.Location = new System.Drawing.Point(9, 23);
+            this.showFileToolbarCheckBox.Name = "showFileToolbarCheckBox";
+            this.showFileToolbarCheckBox.Size = new System.Drawing.Size(331, 17);
+            this.showFileToolbarCheckBox.TabIndex = 0;
+            this.showFileToolbarCheckBox.Text = "Show buttons for the current file on the TortoiseSVN toolbar";
+            this.showFileToolbarCheckBox.UseVisualStyleBackColor = true;
+            // 
             // OptionsDialog
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(396, 330);
+            this.ClientSize = new System.Drawing.Size(396, 392);
             this.Controls.Add(this.groupBox1);
             this.Controls.Add(this.groupBox2);
+            this.Controls.Add(this.groupBox3);
             this.Controls.Add(this.cancelButton);
             this.Controls.Add(this.okButton);
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
@@ -200,6 +224,8 @@
             this.groupBox1.PerformLayout();
             this.groupBox2.ResumeLayout(false);
             this.groupBox2.PerformLayout();
+            this.groupBox3.ResumeLayout(false);
+            this.groupBox3.PerformLayout();
             this.ResumeLayout(false);
 
         }
@@ -220,5 +246,7 @@
         private System.Windows.Forms.GroupBox groupBox2;
         private System.Windows.Forms.CheckBox ignoreWhitespaceCheckBox;
         private System.Windows.Forms.CheckBox showOverviewBarCheckBox;
+        private System.Windows.Forms.GroupBox groupBox3;
+        private System.Windows.Forms.CheckBox showFileToolbarCheckBox;
     }
 }

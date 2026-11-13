@@ -88,6 +88,29 @@ freezes the window.
 
 Change indicators in the editor, see [Diff markers](#diff-markers).
 
+## Toolbar
+
+The `TortoiseSVN` toolbar carries the commands that act on the working copy: Show Changes, Update,
+Commit, Show Log, and the branch, patch and lock commands.
+
+A second group, one button per file command in the editor context menu, can be switched on:
+
+> `TortoiseSVN` → `Windows` → `Options` → **Toolbar** → *Show buttons for the current file on the
+> TortoiseSVN toolbar*
+
+They are **off by default**. The switch is kept in `%LOCALAPPDATA%\TSVN\toolbar.json` and replayed
+when the package loads, so the choice survives a restart; ticking the box applies it immediately.
+
+The buttons act on the document that is open in the editor and are disabled when there is none.
+They have command ids of their own instead of reusing the context menu ones, because visibility
+belongs to a command and applies to every placement: sharing an id would take the context menu
+entry away with the toolbar button whenever the switch is off.
+
+Visual Studio cannot hide a button that is already on a top level toolbar - it disables it instead
+- so the buttons carry a visibility constraint on a UI context of the extension's own
+(`guidTSVNFileToolbarContext` in `TSVN.vsct`, raised by `ToolbarState`). That is why, with the
+switch off, they are absent rather than greyed out.
+
 ## Diff markers
 
 The lines that differ from the `BASE` revision are marked with vertical colour blocks between

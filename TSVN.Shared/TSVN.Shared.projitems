@@ -22,6 +22,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Commands\DiffPreviousCommand.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Commands\DiskBrowserCommand.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Commands\DiskBrowserFileCommand.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\FileToolbarCommands.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Commands\LockCommand.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Commands\LockFileCommand.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Commands\MergeCommand.cs" />
@@ -58,6 +59,7 @@
       <DependentUpon>OptionsDialog.cs</DependentUpon>
     </Compile>
     <Compile Include="$(MSBuildThisFileDirectory)Options\OptionsHelper.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Options\ToolbarState.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TSVNPackage.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TSVNToolWindow.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TSVNToolWindowControl.xaml.cs">
