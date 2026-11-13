@@ -39,8 +39,14 @@ python build\package-vsix.py --assembly <path to TSVN.VS2022.dll> [--deps <folde
 | `MSB3822` / `MSB3823` | the .NET Framework `.resx` holds binary (WinForms) entries that Core MSBuild cannot serialize | pre-compiled with the Framework `resgen.exe`, then embedded under a fixed `LogicalName` |
 | `VSCT1118` / `VSCT1103` | `VSGlobals.vsct` missing from the `.vsct` include path | `Community.VisualStudio.VSCT` package adds it |
 | `CS0246` on `Command` | `Community.VisualStudio.Toolkit` only ships `net48` assets | `TargetFramework` is `net48`, not `net472` |
+| `VSSDK1013` naming a stale `net472\_EmptyResource.resources` | `Microsoft.VsSDK.targets` is imported from the project body, before the SDK computes `IntermediateOutputPath`, so its default state files resolve to `$(IntermediateOutputPath)\resources.json` with an empty prefix — that is `J:\resources.json`, shared by every build and never invalidated | `ResourceManifest`, `CtoFileManifest` and `CtoCacheFile` are pinned inside `obj\` (see the `VsSdkStateDirectory` property group) |
 
 `net48` must stay: retargeting to `net472` leaves the toolkit package with no compile assets.
+
+If a build still fails in `MergeCtoResource`, delete the drive-root leftovers
+(`<drive>:\resources.json`, `ctoFiles.json`, `mergeCto.cache`) and `obj\Release\net48\TSVN.cto`;
+they cache the previous CTO merge and will keep pointing at an intermediate folder that no
+longer exists.
 
 ## VSIX packaging notes
 
@@ -71,6 +77,18 @@ installer rewrites it after installation, duplicating `InstallationTarget` entri
 
 VS 2017 and later use `Microsoft.VisualStudio.Community` as the installation target for every
 edition, so a single `InstallationTarget` covers Community, Professional and Enterprise.
+
+`extension.vsixmanifest` declares two assets:
+
+```xml
+<Asset Type="Microsoft.VisualStudio.VsPackage"    Path="TSVN.VS2022.pkgdef" />
+<Asset Type="Microsoft.VisualStudio.MefComponent" Path="TSVN.VS2022.dll" />
+```
+
+The `MefComponent` asset is what makes Visual Studio compose `DiffMarginProvider` and
+`DiffOverviewMarginProvider` out of this assembly. Drop it and the package still loads, the menu
+still works, and only the editor margins silently never appear. `[ProvideBindingPath]` on
+`TsvnPackage` is required alongside it.
 
 ## Installing
 

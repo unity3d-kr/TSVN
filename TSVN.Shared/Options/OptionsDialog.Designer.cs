@@ -40,6 +40,9 @@
             this.onItemRemovedRemoveFromSVNCheckBox = new System.Windows.Forms.CheckBox();
             this.groupBox1 = new System.Windows.Forms.GroupBox();
             this.closeOnEndCheckBox = new System.Windows.Forms.CheckBox();
+            this.groupBox2 = new System.Windows.Forms.GroupBox();
+            this.ignoreWhitespaceCheckBox = new System.Windows.Forms.CheckBox();
+            this.showOverviewBarCheckBox = new System.Windows.Forms.CheckBox();
             this.groupBox1.SuspendLayout();
             this.SuspendLayout();
             // 
@@ -75,7 +78,7 @@
             // okButton
             // 
             this.okButton.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.okButton.Location = new System.Drawing.Point(228, 213);
+            this.okButton.Location = new System.Drawing.Point(228, 291);
             this.okButton.Name = "okButton";
             this.okButton.Size = new System.Drawing.Size(75, 23);
             this.okButton.TabIndex = 3;
@@ -86,7 +89,7 @@
             // cancelButton
             // 
             this.cancelButton.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.cancelButton.Location = new System.Drawing.Point(309, 213);
+            this.cancelButton.Location = new System.Drawing.Point(309, 291);
             this.cancelButton.Name = "cancelButton";
             this.cancelButton.Size = new System.Drawing.Size(75, 23);
             this.cancelButton.TabIndex = 4;
@@ -150,12 +153,44 @@
             this.closeOnEndCheckBox.Text = "Automatically close dialogs if no errors";
             this.closeOnEndCheckBox.UseVisualStyleBackColor = true;
             // 
+            // groupBox2
+            // 
+            this.groupBox2.Controls.Add(this.showOverviewBarCheckBox);
+            this.groupBox2.Controls.Add(this.ignoreWhitespaceCheckBox);
+            this.groupBox2.Location = new System.Drawing.Point(12, 200);
+            this.groupBox2.Name = "groupBox2";
+            this.groupBox2.Size = new System.Drawing.Size(372, 78);
+            this.groupBox2.TabIndex = 10;
+            this.groupBox2.TabStop = false;
+            this.groupBox2.Text = "Diff markers";
+            // 
+            // ignoreWhitespaceCheckBox
+            // 
+            this.ignoreWhitespaceCheckBox.AutoSize = true;
+            this.ignoreWhitespaceCheckBox.Location = new System.Drawing.Point(9, 22);
+            this.ignoreWhitespaceCheckBox.Name = "ignoreWhitespaceCheckBox";
+            this.ignoreWhitespaceCheckBox.Size = new System.Drawing.Size(221, 17);
+            this.ignoreWhitespaceCheckBox.TabIndex = 0;
+            this.ignoreWhitespaceCheckBox.Text = "Ignore changes that only touch whitespace";
+            this.ignoreWhitespaceCheckBox.UseVisualStyleBackColor = true;
+            // 
+            // showOverviewBarCheckBox
+            // 
+            this.showOverviewBarCheckBox.AutoSize = true;
+            this.showOverviewBarCheckBox.Location = new System.Drawing.Point(9, 45);
+            this.showOverviewBarCheckBox.Name = "showOverviewBarCheckBox";
+            this.showOverviewBarCheckBox.Size = new System.Drawing.Size(262, 17);
+            this.showOverviewBarCheckBox.TabIndex = 1;
+            this.showOverviewBarCheckBox.Text = "Also mark changed regions next to the scroll bar";
+            this.showOverviewBarCheckBox.UseVisualStyleBackColor = true;
+            // 
             // OptionsDialog
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(396, 252);
+            this.ClientSize = new System.Drawing.Size(396, 330);
             this.Controls.Add(this.groupBox1);
+            this.Controls.Add(this.groupBox2);
             this.Controls.Add(this.cancelButton);
             this.Controls.Add(this.okButton);
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
@@ -163,6 +198,8 @@
             this.Text = "Options";
             this.groupBox1.ResumeLayout(false);
             this.groupBox1.PerformLayout();
+            this.groupBox2.ResumeLayout(false);
+            this.groupBox2.PerformLayout();
             this.ResumeLayout(false);
 
         }
@@ -180,5 +217,8 @@
         private System.Windows.Forms.CheckBox onItemRemovedRemoveFromSVNCheckBox;
         private System.Windows.Forms.GroupBox groupBox1;
         private System.Windows.Forms.CheckBox closeOnEndCheckBox;
+        private System.Windows.Forms.GroupBox groupBox2;
+        private System.Windows.Forms.CheckBox ignoreWhitespaceCheckBox;
+        private System.Windows.Forms.CheckBox showOverviewBarCheckBox;
     }
 }

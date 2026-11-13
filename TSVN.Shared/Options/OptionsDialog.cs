@@ -1,4 +1,5 @@
 ﻿using Community.VisualStudio.Toolkit;
+using SamirBoulema.TSVN.Diff;
 using SamirBoulema.TSVN.Helpers;
 using System;
 using System.IO;
@@ -22,6 +23,9 @@ namespace SamirBoulema.TSVN.Options
 
         private void OptionsDialog_Load(object sender, EventArgs e)
         {
+            ignoreWhitespaceCheckBox.Checked = DiffMarkersState.IgnoreWhitespace;
+            showOverviewBarCheckBox.Checked = DiffMarkersState.ShowOverviewBar;
+
             LoadDialog().FireAndForget();
         }
 
@@ -72,6 +76,9 @@ namespace SamirBoulema.TSVN.Options
             options.OnItemRemovedRemoveFromSVN = onItemRemovedRemoveFromSVNCheckBox.Checked;
             options.CloseOnEnd = closeOnEndCheckBox.Checked;
             await OptionsHelper.SaveOptions(options);
+
+            DiffMarkersState.IgnoreWhitespace = ignoreWhitespaceCheckBox.Checked;
+            DiffMarkersState.ShowOverviewBar = showOverviewBarCheckBox.Checked;
             Close();
         }
 

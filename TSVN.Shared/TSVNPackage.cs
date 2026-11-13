@@ -18,6 +18,11 @@ namespace SamirBoulema.TSVN
     [ProvideToolWindow(typeof(TSVNToolWindow.Pane))]
     [ProvideAutoLoad(VSConstants.UICONTEXT.SolutionExists_string, PackageAutoLoadFlags.BackgroundLoad)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
+    // The diff margins are the only MEF exports in this assembly. VSIX v3 does not add the
+    // package folder to the assembly probing path by itself, so MEF composition of
+    // DiffMarginProvider needs this attribute together with the MefComponent asset in the
+    // VSIX manifest.
+    [ProvideBindingPath]
     public sealed class TsvnPackage : ToolkitPackage
     {
         protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)

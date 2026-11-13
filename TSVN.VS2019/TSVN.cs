@@ -64,6 +64,7 @@ namespace SamirBoulema.TSVN
         public const int unlock = 0x0018;
         public const int rename = 0x0019;
         public const int unshelve = 0x001A;
+        public const int diffMarkers = 0x001B;
         public const int Toolbar = 0x1000;
         public const int ToolbarGroup = 0x1050;
         public const int TSVNMenu = 0x1021;
@@ -122,6 +123,7 @@ namespace SamirBoulema.TSVN
         public const int lockFileCommand = 0x0615;
         public const int unlockFileCommand = 0x0616;
         public const int renameFileCommand = 0x0617;
+        public const int toggleDiffMarkersCommand = 0x0618;
         public const int showOptionsDialogCommand = 0x0614;
         public const int TSVNWindowMenu = 0x2000;
         public const int TSVNWindowMenuGroup = 0x2001;

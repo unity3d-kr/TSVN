@@ -16,6 +16,9 @@
   </Installation>
   <Assets>
     <Asset Type="Microsoft.VisualStudio.VsPackage" Path="TSVN.VS2022.pkgdef" />
+    <!-- The diff margins live in the package assembly itself, so it doubles as the MEF
+         component. Without this asset Visual Studio never composes IWpfTextViewMarginProvider. -->
+    <Asset Type="Microsoft.VisualStudio.MefComponent" Path="TSVN.VS2022.dll" />
   </Assets>
   <Prerequisites>
     <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor" Version="[15.0,)" DisplayName="Visual Studio core editor" />

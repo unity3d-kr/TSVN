@@ -3,6 +3,8 @@ Control TortoiseSVN from within Visual Studio
 
 This fork replaces the built-in Octicons with **TortoiseSVN's own XPStyle icon set**, so the extension looks like TortoiseSVN itself. The menu is named `TortoiseSVN` instead of `Tsvn`. See [Icon set](#icon-set).
 
+It also adds **diff markers**: the lines that differ from the `BASE` revision are marked in the editor gutter, VisualSVN style. See [Diff markers](#diff-markers).
+
 # Getting started
 1. Install [TortoiseSVN](http://www.tortoisesvn.net) with "command line client tools"
 2. Install the [TSVN](https://marketplace.visualstudio.com/items?itemName=SamirBoulema.TSVN) extension
@@ -14,6 +16,88 @@ All the SVN functions quickly accessible from the `TortoiseSVN` menu. It is avai
 A customizable toolbar with all your favorite commands.
 
 A pending changes window with the most important commands.
+
+Change indicators in the editor, see [Diff markers](#diff-markers).
+
+## Diff markers
+
+The lines that differ from the `BASE` revision are marked with vertical colour blocks between
+the line numbers and the text, and a map of the whole file is drawn next to the vertical scroll
+bar.
+
+The markers are **off by default and switched on per file**. Reading the `BASE` revision out of
+the working copy is cheap but not free, so a file only pays for it once it is switched on:
+
+> Right-click in the editor → `TortoiseSVN` → `Show Diff Markers`
+
+The command is a checkbox and the choice is remembered per file in
+`%LOCALAPPDATA%\TSVN\diff-markers.json`, so it survives restarts.
+
+### How it works
+
+1. On first activation, and again at most once a minute, `svn cat -r BASE <file>` reads the
+   pristine revision out of the working copy.
+2. That text and the editor buffer are compared in memory. Nothing is saved first, so the
+   markers follow what you type, unsaved changes included.
+3. Recomputation runs 500 ms after the last keystroke, off the UI thread. Typing never touches
+   the disk and never starts a process.
+4. A file whose markers were never switched on starts no subprocess at all.
+
+### Colours
+
+The palette comes from WinMerge's `Options > Colors` dialog. WinMerge paints a changed line with
+the `Difference` background and a line that exists on only one side with that row's `Deleted`
+swatch, so two base colours are enough:
+
+| WinMerge row | Background | Deleted |
+|---|---|---|
+| Difference | `#EFCB05` | `#C0C0C0` |
+| Selected Difference | `#EF7774` | `#F0C0C0` |
+| Ignored Difference | `#FBF2BF` | `#E9E9E9` |
+| Moved | `#E49B52` | `#C0C0C0` |
+| Selected Moved | `#F8704E` | `#FCB5A3` |
+| Same As Next (3 panes) | `#FBFADF` | `#E9E9E9` |
+| Same As Next (Selected) | `#EFB7B4` | `#F0E0E0` |
+| Word Difference | `#F1E2AD` | `#FFAA82` |
+| Selected Word Diff | `#FFA0A0` | `#C8816C` |
+
+Which becomes:
+
+| State | Marker colour | Opacity |
+|---|---|---|
+| Added | `#EFCB05` | 100 % |
+| Modified | `#EFCB05` | 45 % |
+| Deleted | `#C0C0C0` light theme, `#8A8A8A` dark theme | 90 % |
+
+Added and modified lines share the amber and are told apart by weight: a solid bar is a line
+that does not exist in `BASE`, a washed out bar is an edited line. There is deliberately no
+green, matching WinMerge.
+
+### Options
+
+`TortoiseSVN` → `Windows` → `Options` → **Diff markers**:
+
+* *Ignore changes that only touch whitespace*
+* *Also mark changed regions next to the scroll bar*
+
+### Source layout
+
+| File | Role |
+|---|---|
+| `TSVN.Shared/Diff/DiffMargin.cs` | The left gutter: `IWpfTextViewMargin` that paints the blocks |
+| `TSVN.Shared/Diff/DiffMarginProvider.cs` | MEF provider, places the gutter after the line numbers |
+| `TSVN.Shared/Diff/DiffOverviewMargin.cs` | The right hand overview bar and its provider |
+| `TSVN.Shared/Diff/DiffMarkersController.cs` | Per view: debounce, refresh, publish |
+| `TSVN.Shared/Diff/SvnBaseProvider.cs` | `svn cat -r BASE` with a one minute cache |
+| `TSVN.Shared/Diff/LineDiff.cs` | Trim prefix and suffix, then LCS over what is left |
+| `TSVN.Shared/Diff/DiffColorProvider.cs` | WinMerge palette, light and dark variants |
+| `TSVN.Shared/Diff/DiffMarkersState.cs` | Per file opt-in and the two global switches |
+| `TSVN.Shared/Commands/ToggleDiffMarkersCommand.cs` | The menu item |
+
+Because these are the only MEF exports in the assembly, two pieces of registration are required
+and easy to lose: `[ProvideBindingPath]` on `TsvnPackage`, and the
+`Microsoft.VisualStudio.MefComponent` asset in `build/extension.vsixmanifest`. Without them the
+margins are never composed and the command appears to do nothing.
 
 ## Icon set
 
@@ -34,8 +118,11 @@ Menu icons are taken from TortoiseSVN's XPStyle resources (`src/Resources/menu*.
 | 11 | `resolve` | `menuresolve` | 24 | `unlock` | `menuunlock` |
 | 12 | `sync` | `sync` | 25 | `rename` | `menurename` |
 | 13 | `commit` | `menucommit` | 26 | `unshelve` | `menuunshelve` |
+| | | | 27 | `diffMarkers` | drawn for this repo, see below |
 
 To change or add one: replace or append a 16x16 cell in the strip, declare its position with a new `<IDSymbol>` (next free value), extend `usedList`, then point the button's `<Icon id="..."/>` at that symbol. `TSVN.VS2019/TSVN.vsct` carries the same layout.
+
+Slot 27 is the one exception to "taken from TortoiseSVN": none of its menu icons reads as a diff gutter, so the cell is drawn in the same flat XP style — a framed strip of three blocks (solid amber, washed out amber, grey) next to five text lines, mirroring the marker colours below.
 
 The `TortoiseSVN` submenu itself has no icon. Visual Studio cannot render one: `VSCT.exe` silently discards `<Icon>` nested inside a `<Menu>` element, so this is a platform limitation rather than a missing feature.
 

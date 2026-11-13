@@ -103,6 +103,18 @@
            Text="$(OptionsDialogResources) is missing. Run build.cmd, which compiles TSVN.Shared\Options\OptionsDialog.resx with the .NET Framework resgen.exe." />
   </Target>
 
+  <!-- Microsoft.VsSDK.targets is imported from the project body, which is evaluated before the
+       SDK computes IntermediateOutputPath. Its CTO merge state files therefore default to
+       "$(IntermediateOutputPath)\resources.json" with an empty IntermediateOutputPath, i.e. the
+       drive root (J:\resources.json). That path is shared between builds and can keep pointing at
+       a stale intermediate folder, so pin all three files inside obj/. -->
+  <PropertyGroup>
+    <VsSdkStateDirectory>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\</VsSdkStateDirectory>
+    <ResourceManifest>$(VsSdkStateDirectory)resources.json</ResourceManifest>
+    <CtoFileManifest>$(VsSdkStateDirectory)ctoFiles.json</CtoFileManifest>
+    <CtoCacheFile>$(VsSdkStateDirectory)mergeCto.cache</CtoCacheFile>
+  </PropertyGroup>
+
   <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets"
           Condition="Exists('$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets')" />
 
