@@ -208,7 +208,13 @@ namespace SamirBoulema.TSVN.Diff
                 // zoom stretches one and not the other, and the scroll bar the marks have to line
                 // up with is drawn at the strip's scale.
                 var scale = ViewScale.Resolve(_textView, _strip.Element);
-                var canvasHeight = ViewScale.ToCanvas(height, scale);
+
+                // The strip's arranged height, which is the scroll bar's height as well: both are
+                // children of the same margin container. Derived from the viewport only as a
+                // fallback, because ViewportHeight is in text units and has to be scaled first.
+                var canvasHeight = _strip.Element.ActualHeight > 0.0
+                    ? _strip.Element.ActualHeight
+                    : ViewScale.ToCanvas(height, scale);
 
                 // The scroll bar measures the document in displayed lines: a collapsed region costs
                 // nothing but its header.
@@ -248,7 +254,7 @@ namespace SamirBoulema.TSVN.Diff
                         null));
                 }
 
-                Report(_outlines.Manager != null, folds.Count, DiffFolds.HiddenTotal(folds), displayLines, (int)visibleLines, track, canvasHeight, marks.Count);
+                Report(_outlines.Manager != null, folds.Count, DiffFolds.HiddenTotal(folds), displayLines, (int)visibleLines, track, canvasHeight, marks, _strip.Element.ActualHeight);
             }
 
             _strip.Apply(marks);
@@ -283,11 +289,15 @@ namespace SamirBoulema.TSVN.Diff
             int visibleLines,
             double track,
             double canvasHeight,
-            int marks)
+            List<MarkerRect> marks,
+            double stripHeight)
         {
+            var count = marks == null ? 0 : marks.Count;
+            var firstTop = marks != null && count > 0 ? marks[0].Top : double.NaN;
+
             var signature = string.Format(
                 CultureInfo.InvariantCulture,
-                "{0}/{1}/{2}/{3}/{4}/{5:F0}/{6:F0}/{7}",
+                "{0}/{1}/{2}/{3}/{4}/{5:F0}/{6:F0}/{7}/{8:F0}/{9:F0}",
                 hasManager ? 1 : 0,
                 folds,
                 hidden,
@@ -295,7 +305,9 @@ namespace SamirBoulema.TSVN.Diff
                 visibleLines,
                 track,
                 canvasHeight,
-                marks);
+                count,
+                firstTop,
+                stripHeight);
 
             if (string.Equals(signature, _reported, StringComparison.Ordinal))
             {
@@ -321,7 +333,11 @@ namespace SamirBoulema.TSVN.Diff
                     + " visibleLines=" + visibleLines
                     + " track=" + track.ToString("F1", CultureInfo.InvariantCulture)
                     + " canvas=" + canvasHeight.ToString("F1", CultureInfo.InvariantCulture)
-                    + " marks=" + marks
+                    + " marks=" + count
+                    + " first-top=" + firstTop.ToString("F1", CultureInfo.InvariantCulture)
+                    + " strip=" + stripHeight.ToString("F1", CultureInfo.InvariantCulture)
+                    + Environment.NewLine
+                    + "  marks: " + Describe(marks)
                     + Environment.NewLine);
             }
             catch (Exception)
@@ -330,9 +346,43 @@ namespace SamirBoulema.TSVN.Diff
             }
         }
 
-        /// <summary>Height of one rendered line, used to work out how much of the track the thumb takes.</summary>
+        /// <summary>"top+height" of every mark, so the whole strip can be compared with a screenshot.</summary>
+        private static string Describe(List<MarkerRect> marks)
+        {
+            var text = new System.Text.StringBuilder();
+
+            if (marks != null)
+            {
+                for (var i = 0; i < marks.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        text.Append(' ');
+                    }
+
+                    text.Append(marks[i].Top.ToString("F0", CultureInfo.InvariantCulture));
+                    text.Append('+');
+                    text.Append(marks[i].Height.ToString("F0", CultureInfo.InvariantCulture));
+                }
+            }
+
+            return text.ToString();
+        }
+
+        /// <summary>
+        /// Height of one row of text, used to work out how much of the track the thumb takes.
+        ///
+        /// The view's own value, not the height of the first rendered line: a line long enough to
+        /// wrap is two rows tall, and taking that as the row height halves the number of rows that
+        /// are assumed to fit, which moves the whole map.
+        /// </summary>
         private double GetLineHeight()
         {
+            if (_textView.LineHeight > 0.0)
+            {
+                return _textView.LineHeight;
+            }
+
             try
             {
                 var lines = _textView.TextViewLines;
@@ -344,10 +394,10 @@ namespace SamirBoulema.TSVN.Diff
             }
             catch (Exception)
             {
-                // Fall through to the view level value.
+                // Fall through to the last resort.
             }
 
-            return _textView.LineHeight > 0.0 ? _textView.LineHeight : 1.0;
+            return 1.0;
         }
     }
 
