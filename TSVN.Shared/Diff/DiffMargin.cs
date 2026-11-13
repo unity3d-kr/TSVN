@@ -264,7 +264,13 @@ namespace SamirBoulema.TSVN.Diff
             _canvas.Height = viewportHeight > 0 ? viewportHeight : 1.0;
 
             var origin = ResolveOrigin(visible, _textView.ViewportTop, viewportHeight);
-            var shift = ResolveContainerOffset() - origin;
+
+            // Measured, not applied: the gutter is aligned on screen as it is, so a container delta
+            // only becomes a correction if a screenshot ever shows a residual offset. Logged so the
+            // value is known either way.
+            var containerOffset = ResolveContainerOffset();
+            var shift = -origin;
+
             var markers = chunks == null || chunks.Count == 0 || visible.Count == 0
                 ? new List<Rectangle>()
                 : BuildMarkers(chunks, visible, _palette, viewportHeight, shift);
@@ -273,9 +279,13 @@ namespace SamirBoulema.TSVN.Diff
             // whole budget before the document view ever logs.
             if (viewportHeight > 0.0 || _traceCount < 10)
             {
+                // The first marker's own coordinates are logged so a screenshot can be compared
+                // against them without guessing where the crop starts.
+                var firstMarker = markers.Count > 0 ? markers[0] : null;
+
                 Trace(string.Format(
                     CultureInfo.InvariantCulture,
-                    "render \"{0}\" controller={1} enabled={2} chunks={3} visible={4} origin={5} shift={6} vpTop={7} vpHeight={8} firstLine={9} firstTop={10} markers={11}",
+                    "render \"{0}\" controller={1} enabled={2} chunks={3} visible={4} origin={5} shift={6} offset={7} vpTop={8} vpHeight={9} firstLine={10} firstTop={11} markers={12} m0top={13} m0h={14}",
                     _filePath ?? "<none>",
                     _controller == null ? "no" : "yes",
                     DiffMarkersState.IsEnabled(_filePath) ? "yes" : "no",
@@ -283,11 +293,14 @@ namespace SamirBoulema.TSVN.Diff
                     visible.Count,
                     origin,
                     shift,
+                    containerOffset,
                     _textView.ViewportTop,
                     viewportHeight,
                     visible.Count > 0 ? visible[0].LineNumber : -1,
                     visible.Count > 0 ? visible[0].Top : double.NaN,
-                    markers.Count));
+                    markers.Count,
+                    firstMarker == null ? double.NaN : Canvas.GetTop(firstMarker),
+                    firstMarker == null ? double.NaN : firstMarker.Height));
             }
 
             _canvas.Children.Clear();

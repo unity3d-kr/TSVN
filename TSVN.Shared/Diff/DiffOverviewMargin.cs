@@ -167,11 +167,22 @@ namespace SamirBoulema.TSVN.Diff
 
             var palette = _palette;
 
+            // The vertical scroll bar maps the document onto the track minus the thumb, not onto
+            // the whole viewport. Spreading the line numbers over the full height therefore drifts
+            // away from the thumb the further down the file a change sits. Use the scroll bar's
+            // own mapping so a mark sits where the thumb would be for that line.
+            var lineHeight = GetLineHeight();
+            var visibleLines = Math.Max(1.0, Math.Round(height / lineHeight));
+            var track = total > visibleLines
+                ? Math.Max(1.0, height * (1.0 - visibleLines / total))
+                : height;
+
             for (var i = 0; i < chunks.Count; i++)
             {
                 var chunk = chunks[i];
-                var top = (chunk.StartLine - 1) / (double)total * height;
-                var markHeight = chunk.LineCount / (double)total * height;
+                var ratio = total > 1 ? (chunk.StartLine - 1) / (double)(total - 1) : 0.0;
+                var top = ratio * track;
+                var markHeight = chunk.LineCount / (double)total * track;
 
                 if (markHeight < MinimumMarkHeight)
                 {
@@ -194,6 +205,26 @@ namespace SamirBoulema.TSVN.Diff
                 Canvas.SetTop(mark, top);
                 _canvas.Children.Add(mark);
             }
+        }
+
+        /// <summary>Height of one rendered line, used to work out how much of the track the thumb takes.</summary>
+        private double GetLineHeight()
+        {
+            try
+            {
+                var lines = _textView.TextViewLines;
+
+                if (lines != null && lines.IsValid && lines.Count > 0 && lines[0].Height > 0.0)
+                {
+                    return lines[0].Height;
+                }
+            }
+            catch (Exception)
+            {
+                // Fall through to the view level value.
+            }
+
+            return _textView.LineHeight > 0.0 ? _textView.LineHeight : 1.0;
         }
     }
 
