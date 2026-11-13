@@ -25,6 +25,9 @@ namespace SamirBoulema.TSVN.Diff
         private const double MarkerLeft = 1.0;
         private const double MarkerWidth = GutterWidth - 2.0;
 
+        /// <summary>Height of the stub used when a changed run is hidden inside a folded region.</summary>
+        private const double CollapsedMarkHeight = 3.0;
+
         private readonly IWpfTextView _textView;
         private readonly Canvas _canvas;
         private readonly DiffMarkersController _controller;
@@ -185,9 +188,16 @@ namespace SamirBoulema.TSVN.Diff
             }
 
             var palette = _palette;
-            var firstVisible = lines.FirstVisibleLine.Start.GetContainingLine().LineNumber;
-            var lastVisible = lines.LastVisibleLine.End.GetContainingLine().LineNumber;
-            var spans = BuildVisibleSpans(lines);
+
+            // Only the lines that are actually rendered. Lines hidden by a collapsed outlining
+            // region simply have no entry, which is how a chunk living inside the fold is told
+            // apart from one that is merely scrolled out of view.
+            var visible = BuildVisibleLines(lines);
+
+            if (visible.Count == 0)
+            {
+                return;
+            }
 
             // ITextViewLine.Top is already relative to the top of the viewport (the same space
             // GetTextViewLineContainingYCoordinate uses), which is exactly the canvas origin.
@@ -201,37 +211,43 @@ namespace SamirBoulema.TSVN.Diff
                 var start = chunk.StartLine - 1;
                 var end = chunk.EndLine - 1;
 
-                if (end < firstVisible || start > lastVisible)
-                {
-                    continue;
-                }
+                var first = FirstAtOrAfter(visible, start);
 
-                var clampedStart = start < firstVisible ? firstVisible : start;
-                var clampedEnd = end > lastVisible ? lastVisible : end;
+                if (first < 0)
+                {
+                    continue; // the whole run sits below the last rendered line
+                }
 
                 double top;
                 double bottom;
-                LineSpan span;
 
-                // A line that is scrolled out of view, or hidden by outlining, has no entry in
-                // the visible span map. Fall back to the viewport edge instead of dropping the
-                // marker, otherwise a collapsed region silently hides its own changes.
-                if (start < firstVisible || !spans.TryGetValue(clampedStart, out span))
+                if (visible[first].LineNumber > end)
                 {
-                    top = 0.0;
+                    // The run is entirely inside a collapsed region. Point at the fold rather
+                    // than stretching one marker across everything below it.
+                    var fold = first - 1;
+
+                    if (fold < 0)
+                    {
+                        continue;
+                    }
+
+                    bottom = visible[fold].Bottom;
+                    top = bottom - CollapsedMarkHeight;
                 }
                 else
                 {
-                    top = span.Top;
-                }
+                    top = visible[first].Top;
 
-                if (end > lastVisible || !spans.TryGetValue(clampedEnd, out span))
-                {
-                    bottom = viewportHeight;
-                }
-                else
-                {
-                    bottom = span.Bottom;
+                    if (top < 0.0)
+                    {
+                        top = 0.0; // the first line is partially scrolled out
+                    }
+
+                    var last = LastAtOrBefore(visible, end, first);
+                    var runsPastBottom = visible[visible.Count - 1].LineNumber < end;
+
+                    bottom = runsPastBottom ? viewportHeight : visible[last].Bottom;
                 }
 
                 if (bottom <= top)
@@ -267,31 +283,59 @@ namespace SamirBoulema.TSVN.Diff
         }
 
         /// <summary>
-        /// Vertical extent of each visible buffer line. A wrapped line produces several text
-        /// view lines, so the extents are merged.
+        /// Vertical extent of every buffer line the view is currently rendering, ordered by line
+        /// number. A wrapped line produces several text view lines, so the extents are merged.
         /// </summary>
-        private static Dictionary<int, LineSpan> BuildVisibleSpans(ITextViewLineCollection lines)
+        private static List<LineSpan> BuildVisibleLines(ITextViewLineCollection lines)
         {
-            var spans = new Dictionary<int, LineSpan>();
+            var visible = new List<LineSpan>();
 
             foreach (var line in lines)
             {
                 var number = line.Start.GetContainingLine().LineNumber;
-                LineSpan existing;
 
-                if (spans.TryGetValue(number, out existing))
+                if (visible.Count > 0 && visible[visible.Count - 1].LineNumber == number)
                 {
-                    var top = Math.Min(existing.Top, line.Top);
-                    var bottom = Math.Max(existing.Bottom, line.Bottom);
-                    spans[number] = new LineSpan(top, bottom);
+                    var previous = visible[visible.Count - 1];
+                    visible[visible.Count - 1] = new LineSpan(
+                        number,
+                        Math.Min(previous.Top, line.Top),
+                        Math.Max(previous.Bottom, line.Bottom));
+
+                    continue;
                 }
-                else
+
+                visible.Add(new LineSpan(number, line.Top, line.Bottom));
+            }
+
+            return visible;
+        }
+
+        /// <summary>Index of the first rendered line at or after <paramref name="lineNumber"/>, or -1.</summary>
+        private static int FirstAtOrAfter(IReadOnlyList<LineSpan> visible, int lineNumber)
+        {
+            for (var i = 0; i < visible.Count; i++)
+            {
+                if (visible[i].LineNumber >= lineNumber)
                 {
-                    spans[number] = new LineSpan(line.Top, line.Bottom);
+                    return i;
                 }
             }
 
-            return spans;
+            return -1;
+        }
+
+        /// <summary>Index of the last rendered line at or before <paramref name="lineNumber"/>.</summary>
+        private static int LastAtOrBefore(IReadOnlyList<LineSpan> visible, int lineNumber, int from)
+        {
+            var result = from;
+
+            for (var i = from; i < visible.Count && visible[i].LineNumber <= lineNumber; i++)
+            {
+                result = i;
+            }
+
+            return result;
         }
 
         private static string Describe(DiffChunk chunk)
@@ -320,11 +364,14 @@ namespace SamirBoulema.TSVN.Diff
 
         private struct LineSpan
         {
-            public LineSpan(double top, double bottom)
+            public LineSpan(int lineNumber, double top, double bottom)
             {
+                LineNumber = lineNumber;
                 Top = top;
                 Bottom = bottom;
             }
+
+            public int LineNumber { get; private set; }
 
             public double Top { get; private set; }
 

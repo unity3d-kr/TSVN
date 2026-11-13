@@ -14,7 +14,9 @@ namespace SamirBoulema.TSVN.Diff
     /// </summary>
     [Export(typeof(IWpfTextViewMarginProvider))]
     [Name(DiffMargin.MarginName)]
-    [Order(After = PredefinedMarginNames.LineNumber)]
+    // Directly right of the line numbers and left of the outlining margin, so the strip sits
+    // between the numbers and the text instead of after the folding gutter.
+    [Order(After = PredefinedMarginNames.LineNumber, Before = PredefinedMarginNames.Glyph)]
     [MarginContainer(PredefinedMarginNames.Left)]
     [ContentType("text")]
     [TextViewRole(PredefinedTextViewRoles.Document)]
