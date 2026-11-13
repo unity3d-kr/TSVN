@@ -188,8 +188,12 @@ namespace SamirBoulema.TSVN.Diff
             var firstVisible = lines.FirstVisibleLine.Start.GetContainingLine().LineNumber;
             var lastVisible = lines.LastVisibleLine.End.GetContainingLine().LineNumber;
             var spans = BuildVisibleSpans(lines);
-            var viewportTop = _textView.ViewportTop;
-            var viewportBottom = viewportTop + _textView.ViewportHeight;
+
+            // ITextViewLine.Top is measured against the top of the view's layout, while the
+            // canvas origin is the top of the viewport. Subtract the scroll offset, otherwise
+            // the markers drift down as soon as the document is scrolled.
+            var originTop = _textView.ViewportTop;
+            var viewportHeight = _textView.ViewportHeight;
 
             for (var i = 0; i < chunks.Count; i++)
             {
@@ -214,20 +218,20 @@ namespace SamirBoulema.TSVN.Diff
                 // marker, otherwise a collapsed region silently hides its own changes.
                 if (start < firstVisible || !spans.TryGetValue(clampedStart, out span))
                 {
-                    top = viewportTop;
+                    top = 0.0;
                 }
                 else
                 {
-                    top = span.Top;
+                    top = span.Top - originTop;
                 }
 
                 if (end > lastVisible || !spans.TryGetValue(clampedEnd, out span))
                 {
-                    bottom = viewportBottom;
+                    bottom = viewportHeight;
                 }
                 else
                 {
-                    bottom = span.Bottom;
+                    bottom = span.Bottom - originTop;
                 }
 
                 if (bottom <= top)
