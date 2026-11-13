@@ -41,7 +41,7 @@ namespace SamirBoulema.TSVN.Diff
                 Width = GutterWidth,
                 ClipToBounds = true,
                 HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Top,
                 IsHitTestVisible = true
             };
 
@@ -159,6 +159,12 @@ namespace SamirBoulema.TSVN.Diff
 
             _canvas.Children.Clear();
 
+            // A Canvas has no intrinsic size. Without an explicit height the margin container
+            // arranges it at 0x0 and ClipToBounds throws every marker away, which looks exactly
+            // like the margin was never created.
+            _canvas.Width = GutterWidth;
+            _canvas.Height = _textView.ViewportHeight > 0 ? _textView.ViewportHeight : 1.0;
+
             var chunks = _controller == null ? null : _controller.Chunks;
 
             if (chunks == null || chunks.Count == 0)
@@ -201,37 +207,32 @@ namespace SamirBoulema.TSVN.Diff
 
                 double top;
                 double bottom;
+                LineSpan span;
 
-                if (start < firstVisible)
+                // A line that is scrolled out of view, or hidden by outlining, has no entry in
+                // the visible span map. Fall back to the viewport edge instead of dropping the
+                // marker, otherwise a collapsed region silently hides its own changes.
+                if (start < firstVisible || !spans.TryGetValue(clampedStart, out span))
                 {
                     top = viewportTop;
                 }
                 else
                 {
-                    LineSpan span;
-
-                    if (!spans.TryGetValue(clampedStart, out span))
-                    {
-                        continue;
-                    }
-
                     top = span.Top;
                 }
 
-                if (end > lastVisible)
+                if (end > lastVisible || !spans.TryGetValue(clampedEnd, out span))
                 {
                     bottom = viewportBottom;
                 }
                 else
                 {
-                    LineSpan span;
-
-                    if (!spans.TryGetValue(clampedEnd, out span))
-                    {
-                        continue;
-                    }
-
                     bottom = span.Bottom;
+                }
+
+                if (bottom <= top)
+                {
+                    bottom = top + 2.0;
                 }
 
                 var height = bottom - top;

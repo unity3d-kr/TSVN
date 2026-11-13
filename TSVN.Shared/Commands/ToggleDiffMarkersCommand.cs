@@ -46,9 +46,14 @@ namespace SamirBoulema.TSVN.Commands
         {
             var filePath = ThreadHelper.JoinableTaskFactory.Run(GetActiveFilePathAsync);
             var hasFile = !string.IsNullOrEmpty(filePath);
+            var isShown = hasFile && DiffMarkersState.IsEnabled(filePath);
 
             Command.Enabled = hasFile;
-            Command.Checked = hasFile && DiffMarkersState.IsEnabled(filePath);
+            Command.Checked = isShown;
+
+            // Caption states the action rather than the state, so the next click is unambiguous.
+            // The checkbox still reports whether the markers are on.
+            Command.Text = isShown ? "Hide Diff Markers" : "Show Diff Markers";
         }
 
         private static async System.Threading.Tasks.Task<string> GetActiveFilePathAsync()
