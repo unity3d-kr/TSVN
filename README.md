@@ -10,9 +10,34 @@ It also adds **diff markers**: the lines that differ from the `BASE` revision ar
 2. Install the [TSVN](https://marketplace.visualstudio.com/items?itemName=SamirBoulema.TSVN) extension
 3. Enjoy! 
 
+## Building and installing locally
+
+Close Visual Studio, then run `build\reinstall.cmd`. It builds the assembly, packages
+`build/bin/TSVN.VS2022.vsix` and installs it.
+
+`build\install-vsix.py` does the install step alone, and it is worth knowing why it exists
+instead of calling `VSIXInstaller.exe`. That program is a GUI application: it shows a progress
+window, then a result dialog, and it delegates the work to a second process, so `/quiet` removes
+none of it. None of it is necessary either. A VSIX is a zip archive, and an installed extension
+is just a folder holding `extension.vsixmanifest` next to the assembly:
+
+```
+%LOCALAPPDATA%\Microsoft\VisualStudio\17.0_<instance>\Extensions\<folder>\
+```
+
+Visual Studio composes whatever it finds in those folders, so unpacking the archive in place is
+the whole installation. The script does it in process with no child process and no window,
+replaces the existing folder in place rather than adding a second copy, keeps the previous
+version in `%LOCALAPPDATA%\TSVN\backups`, restores it if anything fails, and clears
+`ComponentModelCache` so the new assembly is composed on the next start.
+
+```
+python build/install-vsix.py --dry-run    # resolve the target folder, change nothing
+python build/install-vsix.py              # replace the installed copy
+```
+
 # Features
 All the SVN functions quickly accessible from the `TortoiseSVN` menu. It is available in the main menu bar and in the item context menu, and every command uses the same icon as its TortoiseSVN counterpart.
-
 A customizable toolbar with all your favorite commands.
 
 A pending changes window with the most important commands. On a large working copy the
