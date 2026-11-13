@@ -227,6 +227,13 @@ namespace SamirBoulema.TSVN.Diff
                     ? Math.Max(1.0, canvasHeight * (1.0 - visibleLines / displayLines))
                     : canvasHeight;
 
+                // The thumb travels over that track only: the first displayed line sits at the top
+                // when the view is scrolled to the start, and the last reachable first line -
+                // displayLines minus the ones the viewport shows - sits at the bottom of it.
+                // Dividing by displayLines puts the end of the file short of the end of the track,
+                // which on a folded document is a hundred pixels of drift by the bottom of the file.
+                var span = Math.Max(1.0, displayLines - visibleLines);
+
                 for (var i = 0; i < chunks.Count; i++)
                 {
                     var chunk = chunks[i];
@@ -236,11 +243,14 @@ namespace SamirBoulema.TSVN.Diff
                     var displayStart = startLine - DiffFolds.HiddenBefore(folds, startLine);
                     var displayEnd = endLine - DiffFolds.HiddenBefore(folds, endLine);
 
-                    var ratio = displayLines > 1 ? displayStart / (double)(displayLines - 1) : 0.0;
+                    var ratio = displayStart / span;
                     var top = ratio * track;
+
+                    // Same span as the position: a chunk of L displayed rows covers L rows of the
+                    // document, which is L / (displayLines - visibleLines) of the track.
                     var markHeight = Math.Max(
                         MinimumMarkHeight,
-                        (displayEnd - displayStart + 1) / (double)displayLines * track);
+                        (displayEnd - displayStart + 1) / span * track);
 
                     if (top + markHeight > canvasHeight)
                     {

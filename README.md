@@ -111,7 +111,10 @@ any other hidden run on the same header. A run that is merely scrolled out of vi
 nothing, so there is never a mark floating in the empty space below the end of the file.
 
 The overview bar measures the document in **displayed** lines for the same reason: a fold costs
-the scroll bar nothing but its header, which is why the thumb grows while code is collapsed.
+the scroll bar nothing but its header, which is why the thumb grows while code is collapsed. Those
+lines are mapped onto the track the thumb actually travels over, `height - thumbHeight`, not onto
+the whole bar: with the bar as the denominator the bottom of the file lands short of the bottom of
+the track, about a hundred pixels short on a document with one large fold.
 Both bars are repainted by moving the rectangles that are already on screen rather than rebuilding
 them, because an empty strip inside a single frame is what reads as a flicker while scrolling.
 
