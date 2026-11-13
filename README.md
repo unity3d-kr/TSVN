@@ -76,6 +76,19 @@ Added and modified lines share the amber and are told apart by weight: a solid b
 that does not exist in `BASE`, a washed out bar is an edited line. There is deliberately no
 green, matching WinMerge.
 
+### Folded code
+
+Outlining removes the lines it hides from the editor's layout, so a changed run inside a
+collapsed region has no line of its own to sit on. Such a run is drawn on the region's **header**
+line instead - the line the editor keeps on screen in place of the folded text - and merged with
+any other hidden run on the same header. A run that is merely scrolled out of view produces
+nothing, so there is never a mark floating in the empty space below the end of the file.
+
+The overview bar measures the document in **displayed** lines for the same reason: a fold costs
+the scroll bar nothing but its header, which is why the thumb grows while code is collapsed.
+Both bars are repainted by moving the rectangles that are already on screen rather than rebuilding
+them, because an empty strip inside a single frame is what reads as a flicker while scrolling.
+
 ### Options
 
 `TortoiseSVN` → `Windows` → `Options` in the main menu bar. The dialog ends with a **Diff
@@ -91,6 +104,8 @@ markers** group:
 | `TSVN.Shared/Diff/DiffMargin.cs` | The left gutter: `IWpfTextViewMargin` that paints the blocks |
 | `TSVN.Shared/Diff/DiffMarginProvider.cs` | MEF provider, places the gutter after the line numbers |
 | `TSVN.Shared/Diff/DiffOverviewMargin.cs` | The right hand overview bar and its provider |
+| `TSVN.Shared/Diff/DiffFolds.cs` | Collapsed outlining regions, merged and queried by line |
+| `TSVN.Shared/Diff/MarkerStrip.cs` | The rectangle pool both margins paint through |
 | `TSVN.Shared/Diff/DiffMarkersController.cs` | Per view: debounce, refresh, publish |
 | `TSVN.Shared/Diff/SvnBaseProvider.cs` | `svn cat -r BASE` with a one minute cache |
 | `TSVN.Shared/Diff/LineDiff.cs` | Trim prefix and suffix, then LCS over what is left |

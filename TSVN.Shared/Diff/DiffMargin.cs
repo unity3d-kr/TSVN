@@ -1,16 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
-using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
-using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Formatting;
+using Microsoft.VisualStudio.Text.Outlining;
 
 namespace SamirBoulema.TSVN.Diff
 {
@@ -24,6 +21,11 @@ namespace SamirBoulema.TSVN.Diff
     /// built from the coordinates Visual Studio assigned to the lines it actually rendered, so
     /// scrolling, word wrap and variable line heights are all handled by the same numbers the
     /// text itself is drawn with.
+    ///
+    /// A changed run that is entirely hidden inside a collapsed outlining region is drawn on that
+    /// region's header line instead: the header is the line the editor shows in place of the folded
+    /// text, and it is a real rendered line, so the marker can never land in empty space below the
+    /// code.
     /// </summary>
     public sealed class DiffMargin : IWpfTextViewMargin
     {
@@ -32,9 +34,6 @@ namespace SamirBoulema.TSVN.Diff
         private const double GutterWidth = 6.0;
         private const double MarkerLeft = 1.0;
         private const double MarkerWidth = GutterWidth - 2.0;
-
-        /// <summary>Height of the stub used when a changed run is hidden inside a folded region.</summary>
-        private const double CollapsedMarkHeight = 3.0;
 
         /// <summary>
         /// How often a render may be retried while the view has no usable layout. A chunk list
@@ -45,36 +44,35 @@ namespace SamirBoulema.TSVN.Diff
 
         private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(120);
 
-        /// <summary>How many diagnostic lines one session may write; see <see cref="Trace"/>.</summary>
-        private const int TraceLimit = 300;
-
-        /// <summary>Largest container offset treated as a real displacement; see <see cref="ResolveContainerOffset"/>.</summary>
-        private const double MaxContainerOffset = 50.0;
-
-        private static int _traceCount;
-
         private readonly IWpfTextView _textView;
+        private readonly MarkerStrip _strip;
         private readonly Canvas _canvas;
         private readonly DiffMarkersController _controller;
         private readonly DispatcherTimer _retry;
         private readonly string _filePath;
+        private readonly IOutliningManager _outlining;
 
         private DiffPalette _palette;
         private bool _disposed;
         private int _retryCount;
 
-        public DiffMargin(IWpfTextView textView)
+        private List<DiffFolds.Range> _folds;
+        private ITextSnapshot _foldsSnapshot;
+
+        public DiffMargin(IWpfTextView textView, IOutliningManager outlining)
         {
             _textView = textView;
+            _outlining = outlining;
 
-            _canvas = new Canvas
-            {
-                Width = GutterWidth,
-                ClipToBounds = true,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                IsHitTestVisible = true
-            };
+            _strip = new MarkerStrip(
+                GutterWidth,
+                MarkerLeft,
+                MarkerWidth,
+                1.5,
+                true,
+                VerticalAlignment.Top);
+
+            _canvas = _strip.Element;
 
             _retry = new DispatcherTimer(DispatcherPriority.Background)
             {
@@ -86,6 +84,11 @@ namespace SamirBoulema.TSVN.Diff
             _textView.LayoutChanged += OnLayoutChanged;
             _textView.BackgroundBrushChanged += OnBackgroundBrushChanged;
             _textView.Closed += OnTextViewClosed;
+
+            if (_outlining != null)
+            {
+                _outlining.RegionsChanged += OnRegionsChanged;
+            }
 
             var filePath = GetFilePath(textView.TextBuffer);
 
@@ -104,12 +107,6 @@ namespace SamirBoulema.TSVN.Diff
                 _controller.ChunksChanged += OnChunksChanged;
                 _controller.Start();
             }
-
-            Trace(string.Format(
-                CultureInfo.InvariantCulture,
-                "margin created path=\"{0}\" controller={1}",
-                filePath ?? "<none>",
-                _controller == null ? "no" : "yes"));
         }
 
         public event EventHandler Disposed;
@@ -147,6 +144,11 @@ namespace SamirBoulema.TSVN.Diff
             _textView.BackgroundBrushChanged -= OnBackgroundBrushChanged;
             _textView.Closed -= OnTextViewClosed;
 
+            if (_outlining != null)
+            {
+                _outlining.RegionsChanged -= OnRegionsChanged;
+            }
+
             _retry.Stop();
             _retry.Tick -= OnRetryTick;
 
@@ -156,7 +158,7 @@ namespace SamirBoulema.TSVN.Diff
                 _controller.Dispose();
             }
 
-            _canvas.Children.Clear();
+            _strip.Clear();
 
             var handler = Disposed;
 
@@ -196,16 +198,14 @@ namespace SamirBoulema.TSVN.Diff
 
         private void OnChunksChanged(object sender, EventArgs e)
         {
-            // Logged separately: a chunk list can arrive while the layout is invalid, in which
-            // case Render never reaches its own trace.
-            Trace(string.Format(
-                CultureInfo.InvariantCulture,
-                "chunks changed \"{0}\" n={1}",
-                _filePath ?? "<none>",
-                _controller == null || _controller.Chunks == null
-                    ? "null"
-                    : _controller.Chunks.Count.ToString(CultureInfo.InvariantCulture)));
+            Render();
+        }
 
+        private void OnRegionsChanged(object sender, RegionsChangedEventArgs e)
+        {
+            // A fold changes which lines are on screen but not the buffer, so the cached ranges have
+            // to go before the next layout is mapped.
+            _folds = null;
             Render();
         }
 
@@ -244,71 +244,60 @@ namespace SamirBoulema.TSVN.Diff
             _retry.Stop();
             _retryCount = 0;
 
-            if (_palette == null)
-            {
-                _palette = DiffColorProvider.For(_textView.Background);
-            }
-
             var viewportHeight = _textView.ViewportHeight;
-            var chunks = _controller == null ? null : _controller.Chunks;
 
-            // Only the rendered lines. A line hidden by a collapsed outlining region has no entry
-            // here, and neither has a line outside the viewport, which is what the marker builder
-            // uses to tell a fold apart from a run that scrolled away.
-            var visible = BuildVisibleLines(lines);
+            var markers = new List<MarkerRect>();
+
+            // A zero height view renders no text at all, so there is nothing to align to. Auxiliary
+            // views (peek, preview) report this until they get a layout of their own.
+            if (viewportHeight > 0.0 && DiffMarkersState.IsEnabled(_filePath))
+            {
+                if (_palette == null)
+                {
+                    _palette = DiffColorProvider.For(_textView.Background);
+                }
+
+                var chunks = _controller == null ? null : _controller.Chunks;
+
+                // Only the rendered lines. A line hidden by a collapsed outlining region has no
+                // entry here, which is what tells the marker builder that a run is folded away.
+                var visible = BuildVisibleLines(lines);
+
+                var shift = -ResolveOrigin(visible, _textView.ViewportTop, viewportHeight);
+
+                if (chunks != null && chunks.Count > 0 && visible.Count > 0)
+                {
+                    markers = BuildMarkers(
+                        chunks,
+                        visible,
+                        _palette,
+                        viewportHeight,
+                        shift,
+                        GetFolds());
+                }
+            }
 
             // A Canvas has no intrinsic size. Without an explicit height the margin container
             // arranges it at 0x0 and ClipToBounds throws every marker away, which looks exactly
             // like the margin was never created.
-            _canvas.Width = GutterWidth;
-            _canvas.Height = viewportHeight > 0 ? viewportHeight : 1.0;
+            _strip.SetHeight(viewportHeight);
+            _strip.Apply(markers);
+        }
 
-            var origin = ResolveOrigin(visible, _textView.ViewportTop, viewportHeight);
+        /// <summary>Collapsed regions for the current snapshot, recollected only when the buffer changes.</summary>
+        private List<DiffFolds.Range> GetFolds()
+        {
+            var snapshot = _textView.TextSnapshot;
 
-            // Measured, not applied: the gutter is aligned on screen as it is, so a container delta
-            // only becomes a correction if a screenshot ever shows a residual offset. Logged so the
-            // value is known either way.
-            var containerOffset = ResolveContainerOffset();
-            var shift = -origin;
-
-            var markers = chunks == null || chunks.Count == 0 || visible.Count == 0
-                ? new List<Rectangle>()
-                : BuildMarkers(chunks, visible, _palette, viewportHeight, shift);
-
-            // Auxiliary views (peek, preview) render at zero height and would otherwise use up the
-            // whole budget before the document view ever logs.
-            if (viewportHeight > 0.0 || _traceCount < 10)
+            if (_folds != null && ReferenceEquals(_foldsSnapshot, snapshot))
             {
-                // The first marker's own coordinates are logged so a screenshot can be compared
-                // against them without guessing where the crop starts.
-                var firstMarker = markers.Count > 0 ? markers[0] : null;
-
-                Trace(string.Format(
-                    CultureInfo.InvariantCulture,
-                    "render \"{0}\" controller={1} enabled={2} chunks={3} visible={4} origin={5} shift={6} offset={7} vpTop={8} vpHeight={9} firstLine={10} firstTop={11} markers={12} m0top={13} m0h={14}",
-                    _filePath ?? "<none>",
-                    _controller == null ? "no" : "yes",
-                    DiffMarkersState.IsEnabled(_filePath) ? "yes" : "no",
-                    chunks == null ? "null" : chunks.Count.ToString(CultureInfo.InvariantCulture),
-                    visible.Count,
-                    origin,
-                    shift,
-                    containerOffset,
-                    _textView.ViewportTop,
-                    viewportHeight,
-                    visible.Count > 0 ? visible[0].LineNumber : -1,
-                    visible.Count > 0 ? visible[0].Top : double.NaN,
-                    markers.Count,
-                    firstMarker == null ? double.NaN : Canvas.GetTop(firstMarker),
-                    firstMarker == null ? double.NaN : firstMarker.Height));
+                return _folds;
             }
 
-            _canvas.Children.Clear();
+            _foldsSnapshot = snapshot;
+            _folds = DiffFolds.Collect(_outlining, snapshot);
 
-            for (var i = 0; i < markers.Count; i++)
-            {
-                _canvas.Children.Add(markers[i]);
-            }
+            return _folds;
         }
 
         /// <summary>
@@ -361,68 +350,6 @@ namespace SamirBoulema.TSVN.Diff
             return count;
         }
 
-        /// <summary>
-        /// Vertical distance between the top of the text view and the top of the gutter canvas.
-        ///
-        /// Line coordinates are measured from the text view, while the canvas is arranged by the
-        /// margin container, and those two origins need not coincide - a padding or a one pixel
-        /// border is enough to put every marker a few pixels away from the line it belongs to.
-        /// Measuring the distance removes the guesswork.
-        ///
-        /// Clamped, because a scroll transform on the text view would turn the difference into a
-        /// document sized value; that translation is already handled by the origin.
-        /// </summary>
-        private double ResolveContainerOffset()
-        {
-            try
-            {
-                var textElement = _textView.VisualElement;
-
-                if (textElement == null || _canvas == null)
-                {
-                    return 0.0;
-                }
-
-                var ancestor = FindCommonAncestor(textElement, _canvas);
-
-                if (ancestor == null)
-                {
-                    return 0.0;
-                }
-
-                var textTop = textElement.TransformToAncestor(ancestor).Transform(new Point(0.0, 0.0)).Y;
-                var canvasTop = _canvas.TransformToAncestor(ancestor).Transform(new Point(0.0, 0.0)).Y;
-                var offset = textTop - canvasTop;
-
-                return Math.Abs(offset) <= MaxContainerOffset ? offset : 0.0;
-            }
-            catch (Exception)
-            {
-                // Never let a visual tree quirk take the markers out entirely.
-                return 0.0;
-            }
-        }
-
-        private static Visual FindCommonAncestor(DependencyObject first, DependencyObject second)
-        {
-            var ancestors = new HashSet<DependencyObject>();
-
-            for (var current = first; current != null; current = VisualTreeHelper.GetParent(current))
-            {
-                ancestors.Add(current);
-            }
-
-            for (var current = second; current != null; current = VisualTreeHelper.GetParent(current))
-            {
-                if (ancestors.Contains(current))
-                {
-                    return current as Visual;
-                }
-            }
-
-            return null;
-        }
-
         private void RestartRetry()
         {
             if (_disposed || _retry.IsEnabled || _retryCount >= MaxRetryCount)
@@ -439,20 +366,22 @@ namespace SamirBoulema.TSVN.Diff
         /// run. Because the stretches are taken from the rendered line list, a run that spans more
         /// than the viewport is painted as the part of it that is on screen, and a run that is
         /// scrolled away simply produces nothing.
+        ///
+        /// A run with no rendered line at all is either folded away or off screen. Folding is
+        /// recognised from the outlining state, not from the gap between line numbers: a run whose
+        /// header is known is painted on that header, and anything else is dropped. That is what
+        /// keeps a marker from appearing in the empty area below the last line of a folded file.
         /// </summary>
-        private static List<Rectangle> BuildMarkers(
+        private static List<MarkerRect> BuildMarkers(
             IReadOnlyList<DiffChunk> chunks,
             IReadOnlyList<LineSpan> visible,
             DiffPalette palette,
             double viewportHeight,
-            double shift)
+            double shift,
+            List<DiffFolds.Range> folds)
         {
-            var markers = new List<Rectangle>();
-
-            if (chunks == null || chunks.Count == 0 || visible.Count == 0)
-            {
-                return markers;
-            }
+            var markers = new List<MarkerRect>();
+            var folded = new List<FoldMark>();
 
             for (var i = 0; i < chunks.Count; i++)
             {
@@ -464,13 +393,19 @@ namespace SamirBoulema.TSVN.Diff
 
                 if (first == visible.Count || visible[first].LineNumber > endLine)
                 {
-                    // Nothing rendered inside the run. Rendered lines on both sides mean a fold;
-                    // a run above the first or below the last rendered line is simply off screen.
-                    if (first > 0 && first < visible.Count && visible[first - 1].LineNumber < startLine)
-                    {
-                        var foldBottom = visible[first - 1].Bottom + shift;
+                    var header = DiffFolds.HeaderFor(folds, startLine);
 
-                        markers.Add(CreateMarker(chunk, palette, foldBottom - CollapsedMarkHeight, CollapsedMarkHeight));
+                    if (header < 0 && first > 0 && first < visible.Count
+                        && visible[first - 1].LineNumber < startLine)
+                    {
+                        // No outlining information, but rendered lines bracket the run, so it can
+                        // only be hidden by a fold. The line before it is then its header.
+                        header = visible[first - 1].LineNumber;
+                    }
+
+                    if (header >= 0)
+                    {
+                        AddFoldMark(folded, header, chunk);
                     }
 
                     continue;
@@ -481,7 +416,7 @@ namespace SamirBoulema.TSVN.Diff
                 while (index < visible.Count)
                 {
                     // The line coordinates are moved onto the canvas by the shift resolved for this
-                    // layout; see ResolveOrigin and ResolveContainerOffset.
+                    // layout; see ResolveOrigin.
                     var top = Math.Max(0.0, visible[index].Top + shift);
                     var bottom = visible[index].Bottom + shift;
                     var lineNumber = visible[index].LineNumber;
@@ -498,22 +433,21 @@ namespace SamirBoulema.TSVN.Diff
                         next++;
                     }
 
-                    if (viewportHeight > 0)
+                    // A run that continues past the last rendered line fills the view down to its
+                    // bottom edge; one that ends on screen stops at its last line.
+                    var runsOffScreen = next == visible.Count && lineNumber < endLine;
+
+                    bottom = runsOffScreen
+                        ? Math.Max(bottom, viewportHeight)
+                        : Math.Min(bottom, viewportHeight);
+
+                    if (bottom > 0.0 && top < viewportHeight)
                     {
-                        // A run that continues past the last rendered line fills the view down to
-                        // its bottom edge; one that ends on screen stops at its last line.
-                        var runsOffScreen = next == visible.Count && lineNumber < endLine;
-
-                        bottom = runsOffScreen
-                            ? Math.Max(bottom, viewportHeight)
-                            : Math.Min(bottom, viewportHeight);
-                    }
-
-                    var offScreen = viewportHeight > 0 && (bottom <= 0.0 || top >= viewportHeight);
-
-                    if (!offScreen)
-                    {
-                        markers.Add(CreateMarker(chunk, palette, top, bottom - top));
+                        markers.Add(new MarkerRect(
+                            top,
+                            Math.Max(1.0, bottom - top - 1.0),
+                            palette.ForKind(chunk.Kind),
+                            Describe(chunk)));
                     }
 
                     if (next >= visible.Count || visible[next].LineNumber > endLine)
@@ -525,36 +459,94 @@ namespace SamirBoulema.TSVN.Diff
                 }
             }
 
+            AppendFoldMarkers(markers, folded, visible, palette, viewportHeight, shift);
+
             return markers;
         }
 
-        private static Rectangle CreateMarker(DiffChunk chunk, DiffPalette palette, double top, double height)
+        /// <summary>Records that a fold hides a changed run; repeated runs on one fold are merged.</summary>
+        private static void AddFoldMark(List<FoldMark> folded, int header, DiffChunk chunk)
         {
-            var markerHeight = height;
-
-            if (markerHeight < 1.0)
+            for (var i = 0; i < folded.Count; i++)
             {
-                markerHeight = 1.0;
+                if (folded[i].Header != header)
+                {
+                    continue;
+                }
+
+                var existing = folded[i];
+
+                existing.Kind = Stronger(existing.Kind, chunk.Kind);
+                existing.Lines += Math.Max(1, chunk.LineCount);
+                folded[i] = existing;
+
+                return;
             }
-            else if (markerHeight > 2.0)
+
+            folded.Add(new FoldMark
             {
-                markerHeight -= 1.0; // one pixel gap keeps adjacent runs distinguishable
+                Header = header,
+                Kind = chunk.Kind,
+                Lines = Math.Max(1, chunk.LineCount)
+            });
+        }
+
+        /// <summary>Solid amber wins over grey, so a fold that gained and lost lines reads as changed.</summary>
+        private static DiffKind Stronger(DiffKind left, DiffKind right)
+        {
+            return Rank(left) >= Rank(right) ? left : right;
+        }
+
+        private static int Rank(DiffKind kind)
+        {
+            switch (kind)
+            {
+                case DiffKind.Added: return 2;
+                case DiffKind.Modified: return 1;
+                default: return 0;
             }
+        }
 
-            var marker = new Rectangle
+        /// <summary>
+        /// Paints the folds that hide changed runs. The marker covers the header line, which is the
+        /// only line the editor still shows for that stretch of text.
+        /// </summary>
+        private static void AppendFoldMarkers(
+            List<MarkerRect> markers,
+            List<FoldMark> folded,
+            IReadOnlyList<LineSpan> visible,
+            DiffPalette palette,
+            double viewportHeight,
+            double shift)
+        {
+            for (var i = 0; i < folded.Count; i++)
             {
-                Width = MarkerWidth,
-                Height = markerHeight,
-                Fill = palette.ForKind(chunk.Kind),
-                RadiusX = 1.5,
-                RadiusY = 1.5,
-                ToolTip = Describe(chunk)
-            };
+                var mark = folded[i];
+                var index = IndexOfLine(visible, mark.Header);
 
-            Canvas.SetLeft(marker, MarkerLeft);
-            Canvas.SetTop(marker, top);
+                if (index < 0)
+                {
+                    // The header is scrolled out of view; the fold itself is not on screen either.
+                    continue;
+                }
 
-            return marker;
+                var top = Math.Max(0.0, visible[index].Top + shift);
+                var bottom = Math.Min(viewportHeight, visible[index].Bottom + shift);
+
+                if (bottom <= 0.0 || top >= viewportHeight)
+                {
+                    continue;
+                }
+
+                markers.Add(new MarkerRect(
+                    top,
+                    Math.Max(1.0, bottom - top - 1.0),
+                    palette.ForKind(mark.Kind),
+                    string.Format(
+                        CultureInfo.CurrentCulture,
+                        "{0} changed line(s) hidden in a collapsed region",
+                        mark.Lines)));
+            }
         }
 
         /// <summary>
@@ -567,6 +559,15 @@ namespace SamirBoulema.TSVN.Diff
 
             foreach (var line in lines)
             {
+                // A collection handed out while a fold is collapsing still holds the lines that are
+                // on their way out, with the extents they had before the fold. Their coordinates no
+                // longer correspond to anything on screen, so they are the one thing that can put a
+                // marker in the empty space the fold left behind.
+                if (line.VisibilityState == VisibilityState.Hidden)
+                {
+                    continue;
+                }
+
                 var number = line.Start.GetContainingLine().LineNumber;
 
                 if (visible.Count > 0 && visible[visible.Count - 1].LineNumber == number)
@@ -586,6 +587,20 @@ namespace SamirBoulema.TSVN.Diff
             return visible;
         }
 
+        /// <summary>Index of the rendered line carrying <paramref name="lineNumber"/>, or -1.</summary>
+        private static int IndexOfLine(IReadOnlyList<LineSpan> visible, int lineNumber)
+        {
+            for (var i = 0; i < visible.Count; i++)
+            {
+                if (visible[i].LineNumber == lineNumber)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
         /// <summary>Index of the first rendered line at or after <paramref name="lineNumber"/>, or the count.</summary>
         private static int FirstAtOrAfter(IReadOnlyList<LineSpan> visible, int lineNumber)
         {
@@ -598,34 +613,6 @@ namespace SamirBoulema.TSVN.Diff
             }
 
             return visible.Count;
-        }
-
-        /// <summary>
-        /// Capped trace of the render inputs, written to %LOCALAPPDATA%\TSVN\diff-markers.log.
-        /// Temporary: it exists to confirm which coordinate space Visual Studio reports on a
-        /// machine that runs a real editor, then it goes away.
-        /// </summary>
-        private static void Trace(string message)
-        {
-            if (Interlocked.Increment(ref _traceCount) > TraceLimit)
-            {
-                return;
-            }
-
-            try
-            {
-                var folder = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "TSVN");
-
-                Directory.CreateDirectory(folder);
-
-                File.AppendAllText(System.IO.Path.Combine(folder, "diff-markers.log"), message + Environment.NewLine);
-            }
-            catch (Exception)
-            {
-                // Diagnostics are never a reason to break the margin.
-            }
         }
 
         private static string Describe(DiffChunk chunk)
@@ -650,6 +637,16 @@ namespace SamirBoulema.TSVN.Diff
                         "{0} line(s) changed since BASE",
                         chunk.LineCount);
             }
+        }
+
+        /// <summary>A fold that hides at least one changed line.</summary>
+        private struct FoldMark
+        {
+            public int Header;
+
+            public DiffKind Kind;
+
+            public int Lines;
         }
 
         private struct LineSpan

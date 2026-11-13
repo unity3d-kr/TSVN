@@ -2,9 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
-using System.Windows.Shapes;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Outlining;
@@ -33,14 +30,14 @@ namespace SamirBoulema.TSVN.Diff
 
         private readonly IWpfTextView _textView;
         private readonly ITextBuffer _buffer;
-        private readonly Canvas _canvas;
+        private readonly MarkerStrip _strip;
         private readonly IOutliningManager _outlining;
 
         private DiffPalette _palette;
         private bool _disposed;
 
-        private List<CollapsedRange> _collapsed;
-        private ITextSnapshot _collapsedSnapshot;
+        private List<DiffFolds.Range> _folds;
+        private ITextSnapshot _foldsSnapshot;
 
         public DiffOverviewMargin(IWpfTextView textView, IOutliningManager outlining)
         {
@@ -48,14 +45,15 @@ namespace SamirBoulema.TSVN.Diff
             _buffer = textView.TextBuffer;
             _outlining = outlining;
 
-            _canvas = new Canvas
-            {
-                Width = StripWidth,
-                ClipToBounds = true,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Stretch,
-                IsHitTestVisible = false
-            };
+            // Stretched rather than measured: the strip follows the height of the margin container,
+            // which is the same height the scroll bar is given.
+            _strip = new MarkerStrip(
+                StripWidth,
+                0.0,
+                StripWidth,
+                0.0,
+                false,
+                VerticalAlignment.Stretch);
 
             _textView.LayoutChanged += OnLayoutChanged;
             _textView.BackgroundBrushChanged += OnBackgroundBrushChanged;
@@ -74,7 +72,7 @@ namespace SamirBoulema.TSVN.Diff
 
         public FrameworkElement VisualElement
         {
-            get { return _canvas; }
+            get { return _strip.Element; }
         }
 
         public double MarginSize
@@ -113,7 +111,7 @@ namespace SamirBoulema.TSVN.Diff
                 _outlining.RegionsChanged -= OnRegionsChanged;
             }
 
-            _canvas.Children.Clear();
+            _strip.Clear();
 
             var handler = Disposed;
 
@@ -152,7 +150,7 @@ namespace SamirBoulema.TSVN.Diff
         private void OnRegionsChanged(object sender, RegionsChangedEventArgs e)
         {
             // A fold changes the displayed height of the document, so every mark moves.
-            _collapsed = null;
+            _folds = null;
             Render();
         }
 
@@ -170,158 +168,79 @@ namespace SamirBoulema.TSVN.Diff
                 return;
             }
 
-            _canvas.Children.Clear();
+            var marks = new List<MarkerRect>();
 
-            if (!DiffMarkersState.ShowOverviewBar || !DiffMarkersState.IsEnabled(DiffMargin.GetFilePath(_buffer)))
-            {
-                return;
-            }
+            var chunks = DiffMarkersState.ShowOverviewBar && DiffMarkersState.IsEnabled(DiffMargin.GetFilePath(_buffer))
+                ? DiffChunkCache.Get(_buffer)
+                : null;
 
-            var chunks = DiffChunkCache.Get(_buffer);
             var snapshot = _textView.TextSnapshot;
             var height = _textView.ViewportHeight;
 
-            if (chunks.Count == 0 || height <= 0 || snapshot.LineCount <= 0)
+            if (chunks != null && chunks.Count > 0 && height > 0.0 && snapshot.LineCount > 0)
             {
-                return;
-            }
-
-            if (_palette == null)
-            {
-                _palette = DiffColorProvider.For(_textView.Background);
-            }
-
-            var palette = _palette;
-            var collapsed = GetCollapsedRanges(snapshot);
-
-            // The scroll bar measures the document in displayed lines: a collapsed region costs
-            // nothing but its header. Counting buffer lines instead makes the marks drift as soon
-            // as anything is folded.
-            var hiddenTotal = 0;
-
-            for (var i = 0; i < collapsed.Count; i++)
-            {
-                hiddenTotal += collapsed[i].Count;
-            }
-
-            var displayLines = Math.Max(1, snapshot.LineCount - hiddenTotal);
-            var visibleLines = Math.Max(1.0, Math.Round(height / GetLineHeight()));
-
-            // The scroll bar maps the document onto the track minus the thumb.
-            var track = displayLines > visibleLines
-                ? Math.Max(1.0, height * (1.0 - visibleLines / displayLines))
-                : height;
-
-            for (var i = 0; i < chunks.Count; i++)
-            {
-                var chunk = chunks[i];
-                var startLine = chunk.StartLine - 1;
-                var endLine = chunk.EndLine - 1;
-
-                var displayStart = startLine - HiddenBefore(collapsed, startLine);
-                var displayEnd = endLine - HiddenBefore(collapsed, endLine);
-
-                var ratio = displayLines > 1 ? displayStart / (double)(displayLines - 1) : 0.0;
-                var top = ratio * track;
-                var markHeight = Math.Max(MinimumMarkHeight, (displayEnd - displayStart + 1) / (double)displayLines * track);
-
-                if (top + markHeight > height)
+                if (_palette == null)
                 {
-                    top = Math.Max(0, height - markHeight);
+                    _palette = DiffColorProvider.For(_textView.Background);
                 }
 
-                var mark = new Rectangle
+                var palette = _palette;
+                var folds = GetFolds(snapshot);
+
+                // The scroll bar measures the document in displayed lines: a collapsed region costs
+                // nothing but its header.
+                var displayLines = Math.Max(1, snapshot.LineCount - DiffFolds.HiddenTotal(folds));
+                var visibleLines = Math.Max(1.0, Math.Round(height / GetLineHeight()));
+
+                // The document is mapped onto the track minus the thumb, which is exactly the space
+                // the scroll bar has to move the thumb through.
+                var track = displayLines > visibleLines
+                    ? Math.Max(1.0, height * (1.0 - visibleLines / displayLines))
+                    : height;
+
+                for (var i = 0; i < chunks.Count; i++)
                 {
-                    Width = StripWidth,
-                    Height = markHeight,
-                    Fill = palette.ForKind(chunk.Kind)
-                };
+                    var chunk = chunks[i];
+                    var startLine = chunk.StartLine - 1;
+                    var endLine = chunk.EndLine - 1;
 
-                Canvas.SetLeft(mark, 0);
-                Canvas.SetTop(mark, top);
-                _canvas.Children.Add(mark);
-            }
-        }
+                    var displayStart = startLine - DiffFolds.HiddenBefore(folds, startLine);
+                    var displayEnd = endLine - DiffFolds.HiddenBefore(folds, endLine);
 
-        /// <summary>
-        /// Buffer lines hidden by collapsed outlining regions, merged so overlapping folds are not
-        /// counted twice.
-        /// </summary>
-        private List<CollapsedRange> GetCollapsedRanges(ITextSnapshot snapshot)
-        {
-            if (_collapsed != null && ReferenceEquals(_collapsedSnapshot, snapshot))
-            {
-                return _collapsed;
-            }
+                    var ratio = displayLines > 1 ? displayStart / (double)(displayLines - 1) : 0.0;
+                    var top = ratio * track;
+                    var markHeight = Math.Max(
+                        MinimumMarkHeight,
+                        (displayEnd - displayStart + 1) / (double)displayLines * track);
 
-            var ranges = new List<CollapsedRange>();
-            _collapsedSnapshot = snapshot;
-
-            try
-            {
-                if (_outlining != null)
-                {
-                    foreach (var region in _outlining.GetCollapsedRegions(new SnapshotSpan(snapshot, 0, snapshot.Length)))
+                    if (top + markHeight > height)
                     {
-                        var extent = region.Extent.GetSpan(snapshot);
-                        var first = extent.Start.GetContainingLine().LineNumber;
-                        var last = extent.End.GetContainingLine().LineNumber;
-
-                        // The header line of a fold stays on screen.
-                        if (last > first)
-                        {
-                            ranges.Add(new CollapsedRange(first + 1, last));
-                        }
+                        top = Math.Max(0, height - markHeight);
                     }
+
+                    marks.Add(new MarkerRect(
+                        top,
+                        markHeight,
+                        palette.ForKind(chunk.Kind),
+                        null));
                 }
             }
-            catch (Exception)
-            {
-                // Outlining can be unavailable while the view is being torn down; ignoring it only
-                // costs accuracy, never the marks.
-            }
 
-            ranges.Sort((left, right) => left.First.CompareTo(right.First));
-
-            var merged = new List<CollapsedRange>();
-
-            for (var i = 0; i < ranges.Count; i++)
-            {
-                if (merged.Count > 0 && ranges[i].First <= merged[merged.Count - 1].Last + 1)
-                {
-                    var previous = merged[merged.Count - 1];
-                    previous.Last = Math.Max(previous.Last, ranges[i].Last);
-                    merged[merged.Count - 1] = previous;
-
-                    continue;
-                }
-
-                merged.Add(ranges[i]);
-            }
-
-            _collapsed = merged;
-
-            return merged;
+            _strip.Apply(marks);
         }
 
-        /// <summary>How many of the given lines are hidden by a fold above or at <paramref name="line"/>.</summary>
-        private static int HiddenBefore(List<CollapsedRange> ranges, int line)
+        /// <summary>Collapsed regions of the current snapshot, recollected only when it changes.</summary>
+        private List<DiffFolds.Range> GetFolds(ITextSnapshot snapshot)
         {
-            var hidden = 0;
-
-            for (var i = 0; i < ranges.Count; i++)
+            if (_folds != null && ReferenceEquals(_foldsSnapshot, snapshot))
             {
-                var range = ranges[i];
-
-                if (line < range.First)
-                {
-                    break;
-                }
-
-                hidden += Math.Min(line, range.Last) - range.First + 1;
+                return _folds;
             }
 
-            return hidden;
+            _foldsSnapshot = snapshot;
+            _folds = DiffFolds.Collect(_outlining, snapshot);
+
+            return _folds;
         }
 
         /// <summary>Height of one rendered line, used to work out how much of the track the thumb takes.</summary>
@@ -342,24 +261,6 @@ namespace SamirBoulema.TSVN.Diff
             }
 
             return _textView.LineHeight > 0.0 ? _textView.LineHeight : 1.0;
-        }
-
-        private struct CollapsedRange
-        {
-            public CollapsedRange(int first, int last)
-            {
-                First = first;
-                Last = last;
-            }
-
-            public int First;
-
-            public int Last;
-
-            public int Count
-            {
-                get { return Last - First + 1; }
-            }
         }
     }
 
