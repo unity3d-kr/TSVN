@@ -75,7 +75,8 @@ green, matching WinMerge.
 
 ### Options
 
-`TortoiseSVN` → `Windows` → `Options` → **Diff markers**:
+`TortoiseSVN` → `Options`, either from the editor context menu (right below `Show Diff Markers`)
+or from `Windows` → `Options` in the main menu bar. The dialog ends with a **Diff markers** group:
 
 * *Ignore changes that only touch whitespace*
 * *Also mark changed regions next to the scroll bar*

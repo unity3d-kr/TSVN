@@ -465,6 +465,15 @@
     </Bitmaps>
   </Commands>
 
+  <CommandPlacements>
+    <!-- The Options dialog used to live only under TortoiseSVN > Windows in the main menu
+         bar, which is unreachable from the editor context menu. Place it here as well so the
+         settings, including the Diff markers switches, are one click away. -->
+    <CommandPlacement guid="guidTSVNCmdSet" id="showOptionsDialogCommand" priority="0x0B00">
+      <Parent guid="guidTSVNCmdSet" id="fourthContextMenuGroup" />
+    </CommandPlacement>
+  </CommandPlacements>
+
   <KeyBindings>
     <KeyBinding guid="guidTSVNCmdSet" key1="S" key2="C" mod1="CONTROL SHIFT ALT" editor="guidVSStd97" id="commitCommand" />
     <KeyBinding guid="guidTSVNCmdSet" key1="S" key2="W" mod1="CONTROL SHIFT ALT" editor="guidVSStd97" id="showChangesCommand" />
