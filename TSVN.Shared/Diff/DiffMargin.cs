@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Formatting;
@@ -34,6 +35,7 @@ namespace SamirBoulema.TSVN.Diff
 
         private DiffPalette _palette;
         private bool _disposed;
+        private bool _renderQueued;
 
         public DiffMargin(IWpfTextView textView)
         {
@@ -138,19 +140,52 @@ namespace SamirBoulema.TSVN.Diff
         private void OnBackgroundBrushChanged(object sender, BackgroundBrushChangedEventArgs e)
         {
             _palette = null;
-            Render();
+            ScheduleRender();
         }
 
         private void OnChunksChanged(object sender, EventArgs e)
         {
-            Render();
+            // Raised on the UI thread, but a new chunk list can land before the first layout of
+            // an editor that was just opened; the deferred pass then has real coordinates.
+            ScheduleRender();
         }
 
         private void OnLayoutChanged(object sender, TextViewLayoutChangedEventArgs e)
         {
-            // Positions are recomputed from the current layout, so only a full redraw of the
-            // markers matters here; the chunk list itself is unaffected by scrolling.
-            Render();
+            // Repaint later rather than here. While LayoutChanged is being raised the view can
+            // still be holding the line collection of the previous layout, with IsValid false;
+            // painting from it yields stale coordinates, and giving up on it leaves the gutter
+            // empty. Deferring means the markers are recomputed from the layout the event was
+            // announcing, which is what makes them follow a scroll instead of vanishing on it.
+            ScheduleRender();
+        }
+
+        /// <summary>
+        /// Coalesces redraws onto the dispatcher: a single scroll gesture raises LayoutChanged
+        /// many times and only the last of those positions is worth painting.
+        /// </summary>
+        private void ScheduleRender()
+        {
+            if (_disposed || _renderQueued)
+            {
+                return;
+            }
+
+            _renderQueued = true;
+
+            // Deliberately a dispatcher post, not a thread switch: this already runs on the UI
+            // thread and the only goal is to queue the work behind the layout pass that is
+            // raising the event. VSTHRD001/VSTHRD110 fire on every Dispatcher call, hence the
+            // suppression rather than a JoinableTaskFactory hop that would do the same thing.
+#pragma warning disable VSTHRD001, VSTHRD110 // Intentional dispatcher deferral on the UI thread
+            _textView.VisualElement.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() =>
+                {
+                    _renderQueued = false;
+                    Render();
+                }));
+#pragma warning restore VSTHRD001, VSTHRD110
         }
 
         private void Render()
@@ -160,23 +195,12 @@ namespace SamirBoulema.TSVN.Diff
                 return;
             }
 
-            _canvas.Children.Clear();
-
-            // A Canvas has no intrinsic size. Without an explicit height the margin container
-            // arranges it at 0x0 and ClipToBounds throws every marker away, which looks exactly
-            // like the margin was never created.
-            _canvas.Width = GutterWidth;
-            _canvas.Height = _textView.ViewportHeight > 0 ? _textView.ViewportHeight : 1.0;
-
             var chunks = _controller == null ? null : _controller.Chunks;
-
-            if (chunks == null || chunks.Count == 0)
-            {
-                return;
-            }
-
             var lines = _textView.TextViewLines;
 
+            // Nothing is removed from the canvas before this point on purpose. If the layout is
+            // mid-flight the markers already on screen are still the best approximation, and the
+            // render queued by OnLayoutChanged will replace them as soon as it settles.
             if (lines == null || !lines.IsValid)
             {
                 return;
@@ -187,7 +211,35 @@ namespace SamirBoulema.TSVN.Diff
                 _palette = DiffColorProvider.For(_textView.Background);
             }
 
-            var palette = _palette;
+            var viewportHeight = _textView.ViewportHeight;
+            var markers = BuildMarkers(chunks, lines, _palette, viewportHeight);
+
+            // A Canvas has no intrinsic size. Without an explicit height the margin container
+            // arranges it at 0x0 and ClipToBounds throws every marker away, which looks exactly
+            // like the margin was never created.
+            _canvas.Width = GutterWidth;
+            _canvas.Height = viewportHeight > 0 ? viewportHeight : 1.0;
+
+            _canvas.Children.Clear();
+
+            for (var i = 0; i < markers.Count; i++)
+            {
+                _canvas.Children.Add(markers[i]);
+            }
+        }
+
+        private static List<Rectangle> BuildMarkers(
+            IReadOnlyList<DiffChunk> chunks,
+            ITextViewLineCollection lines,
+            DiffPalette palette,
+            double viewportHeight)
+        {
+            var markers = new List<Rectangle>();
+
+            if (chunks == null || chunks.Count == 0)
+            {
+                return markers;
+            }
 
             // Only the lines that are actually rendered. Lines hidden by a collapsed outlining
             // region simply have no entry, which is how a chunk living inside the fold is told
@@ -196,20 +248,25 @@ namespace SamirBoulema.TSVN.Diff
 
             if (visible.Count == 0)
             {
-                return;
+                return markers;
             }
 
-            // ITextViewLine.Top is already relative to the top of the viewport (the same space
-            // GetTextViewLineContainingYCoordinate uses), which is exactly the canvas origin.
-            // Do not add or subtract the scroll offset here: ViewportTop is a layout-space
-            // value and using it shifts every marker off the top of the gutter.
-            var viewportHeight = _textView.ViewportHeight;
+            var firstVisibleLine = visible[0].LineNumber;
+            var lastVisibleLine = visible[visible.Count - 1].LineNumber;
 
             for (var i = 0; i < chunks.Count; i++)
             {
                 var chunk = chunks[i];
                 var start = chunk.StartLine - 1;
                 var end = chunk.EndLine - 1;
+
+                // Scrolled off the top. A chunk inside a collapsed region never reaches this
+                // branch: the fold is still represented by its first line, whose number is below
+                // the chunk, so it stays at or above the first rendered line instead.
+                if (end < firstVisibleLine)
+                {
+                    continue;
+                }
 
                 var first = FirstAtOrAfter(visible, start);
 
@@ -237,6 +294,10 @@ namespace SamirBoulema.TSVN.Diff
                 }
                 else
                 {
+                    // ITextViewLine.Top is already relative to the top of the viewport (the same
+                    // space GetTextViewLineContainingYCoordinate uses), which is exactly the
+                    // canvas origin. Do not add or subtract the scroll offset here: ViewportTop
+                    // is a layout-space value and using it shifts every marker off the gutter.
                     top = visible[first].Top;
 
                     if (top < 0.0)
@@ -245,9 +306,8 @@ namespace SamirBoulema.TSVN.Diff
                     }
 
                     var last = LastAtOrBefore(visible, end, first);
-                    var runsPastBottom = visible[visible.Count - 1].LineNumber < end;
 
-                    bottom = runsPastBottom ? viewportHeight : visible[last].Bottom;
+                    bottom = lastVisibleLine < end ? viewportHeight : visible[last].Bottom;
                 }
 
                 if (bottom <= top)
@@ -278,8 +338,10 @@ namespace SamirBoulema.TSVN.Diff
 
                 Canvas.SetLeft(marker, MarkerLeft);
                 Canvas.SetTop(marker, top);
-                _canvas.Children.Add(marker);
+                markers.Add(marker);
             }
+
+            return markers;
         }
 
         /// <summary>
