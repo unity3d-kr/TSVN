@@ -17,6 +17,11 @@ namespace SamirBoulema.TSVN.Diff
     ///
     /// One marker per changed run: amber for lines that do not exist in BASE, a washed out
     /// amber for edited lines and grey where BASE lines were removed.
+    ///
+    /// Geometry is never derived from line numbers or from the scroll offset. Every rectangle is
+    /// built from the coordinates Visual Studio assigned to the lines it actually rendered, so
+    /// scrolling, word wrap and variable line heights are all handled by the same numbers the
+    /// text itself is drawn with.
     /// </summary>
     public sealed class DiffMargin : IWpfTextViewMargin
     {
@@ -29,13 +34,23 @@ namespace SamirBoulema.TSVN.Diff
         /// <summary>Height of the stub used when a changed run is hidden inside a folded region.</summary>
         private const double CollapsedMarkHeight = 3.0;
 
+        /// <summary>
+        /// How often a render may be retried while the view has no usable layout. A chunk list
+        /// can arrive before the first layout pass, and without a retry the strip stays empty
+        /// until the user scrolls.
+        /// </summary>
+        private const int MaxRetryCount = 8;
+
+        private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(120);
+
         private readonly IWpfTextView _textView;
         private readonly Canvas _canvas;
         private readonly DiffMarkersController _controller;
+        private readonly DispatcherTimer _retry;
 
         private DiffPalette _palette;
         private bool _disposed;
-        private bool _renderQueued;
+        private int _retryCount;
 
         public DiffMargin(IWpfTextView textView)
         {
@@ -49,6 +64,13 @@ namespace SamirBoulema.TSVN.Diff
                 VerticalAlignment = VerticalAlignment.Top,
                 IsHitTestVisible = true
             };
+
+            _retry = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = RetryDelay
+            };
+
+            _retry.Tick += OnRetryTick;
 
             _textView.LayoutChanged += OnLayoutChanged;
             _textView.BackgroundBrushChanged += OnBackgroundBrushChanged;
@@ -99,6 +121,9 @@ namespace SamirBoulema.TSVN.Diff
             _textView.BackgroundBrushChanged -= OnBackgroundBrushChanged;
             _textView.Closed -= OnTextViewClosed;
 
+            _retry.Stop();
+            _retry.Tick -= OnRetryTick;
+
             if (_controller != null)
             {
                 _controller.ChunksChanged -= OnChunksChanged;
@@ -140,52 +165,26 @@ namespace SamirBoulema.TSVN.Diff
         private void OnBackgroundBrushChanged(object sender, BackgroundBrushChangedEventArgs e)
         {
             _palette = null;
-            ScheduleRender();
+            Render();
         }
 
         private void OnChunksChanged(object sender, EventArgs e)
         {
-            // Raised on the UI thread, but a new chunk list can land before the first layout of
-            // an editor that was just opened; the deferred pass then has real coordinates.
-            ScheduleRender();
+            Render();
         }
 
         private void OnLayoutChanged(object sender, TextViewLayoutChangedEventArgs e)
         {
-            // Repaint later rather than here. While LayoutChanged is being raised the view can
-            // still be holding the line collection of the previous layout, with IsValid false;
-            // painting from it yields stale coordinates, and giving up on it leaves the gutter
-            // empty. Deferring means the markers are recomputed from the layout the event was
-            // announcing, which is what makes them follow a scroll instead of vanishing on it.
-            ScheduleRender();
+            // Rendered in place, not deferred: the marker positions have to be recomputed from the
+            // layout this event announces, and any queueing here shows up as markers that trail
+            // the text while scrolling.
+            Render();
         }
 
-        /// <summary>
-        /// Coalesces redraws onto the dispatcher: a single scroll gesture raises LayoutChanged
-        /// many times and only the last of those positions is worth painting.
-        /// </summary>
-        private void ScheduleRender()
+        private void OnRetryTick(object sender, EventArgs e)
         {
-            if (_disposed || _renderQueued)
-            {
-                return;
-            }
-
-            _renderQueued = true;
-
-            // Deliberately a dispatcher post, not a thread switch: this already runs on the UI
-            // thread and the only goal is to queue the work behind the layout pass that is
-            // raising the event. VSTHRD001/VSTHRD110 fire on every Dispatcher call, hence the
-            // suppression rather than a JoinableTaskFactory hop that would do the same thing.
-#pragma warning disable VSTHRD001, VSTHRD110 // Intentional dispatcher deferral on the UI thread
-            _textView.VisualElement.Dispatcher.BeginInvoke(
-                DispatcherPriority.Background,
-                new Action(() =>
-                {
-                    _renderQueued = false;
-                    Render();
-                }));
-#pragma warning restore VSTHRD001, VSTHRD110
+            _retry.Stop();
+            Render();
         }
 
         private void Render()
@@ -195,16 +194,19 @@ namespace SamirBoulema.TSVN.Diff
                 return;
             }
 
-            var chunks = _controller == null ? null : _controller.Chunks;
             var lines = _textView.TextViewLines;
 
-            // Nothing is removed from the canvas before this point on purpose. If the layout is
-            // mid-flight the markers already on screen are still the best approximation, and the
-            // render queued by OnLayoutChanged will replace them as soon as it settles.
+            // A layout pass can still hand out the previous, already invalidated line collection.
+            // Nothing is removed from the canvas in that case: the markers already on screen stay
+            // until a layout with usable coordinates comes along.
             if (lines == null || !lines.IsValid)
             {
+                RestartRetry();
                 return;
             }
+
+            _retry.Stop();
+            _retryCount = 0;
 
             if (_palette == null)
             {
@@ -212,7 +214,7 @@ namespace SamirBoulema.TSVN.Diff
             }
 
             var viewportHeight = _textView.ViewportHeight;
-            var markers = BuildMarkers(chunks, lines, _palette, viewportHeight);
+            var markers = BuildMarkers(_controller == null ? null : _controller.Chunks, lines, _palette, viewportHeight);
 
             // A Canvas has no intrinsic size. Without an explicit height the margin container
             // arranges it at 0x0 and ClipToBounds throws every marker away, which looks exactly
@@ -228,6 +230,23 @@ namespace SamirBoulema.TSVN.Diff
             }
         }
 
+        private void RestartRetry()
+        {
+            if (_disposed || _retry.IsEnabled || _retryCount >= MaxRetryCount)
+            {
+                return;
+            }
+
+            _retryCount++;
+            _retry.Start();
+        }
+
+        /// <summary>
+        /// Builds one rectangle per unbroken stretch of rendered lines that belongs to a changed
+        /// run. Because the stretches are taken from the rendered line list, a run that spans more
+        /// than the viewport is painted as the part of it that is on screen, and a run that is
+        /// scrolled away simply produces nothing.
+        /// </summary>
         private static List<Rectangle> BuildMarkers(
             IReadOnlyList<DiffChunk> chunks,
             ITextViewLineCollection lines,
@@ -241,9 +260,9 @@ namespace SamirBoulema.TSVN.Diff
                 return markers;
             }
 
-            // Only the lines that are actually rendered. Lines hidden by a collapsed outlining
-            // region simply have no entry, which is how a chunk living inside the fold is told
-            // apart from one that is merely scrolled out of view.
+            // Only the rendered lines. A line hidden by a collapsed outlining region has no entry
+            // here, and neither has a line outside the viewport, which is exactly what the two
+            // branches below use to tell a fold apart from a run that scrolled away.
             var visible = BuildVisibleLines(lines);
 
             if (visible.Count == 0)
@@ -251,97 +270,103 @@ namespace SamirBoulema.TSVN.Diff
                 return markers;
             }
 
-            var firstVisibleLine = visible[0].LineNumber;
-            var lastVisibleLine = visible[visible.Count - 1].LineNumber;
-
             for (var i = 0; i < chunks.Count; i++)
             {
                 var chunk = chunks[i];
-                var start = chunk.StartLine - 1;
-                var end = chunk.EndLine - 1;
+                var startLine = chunk.StartLine - 1;
+                var endLine = chunk.EndLine - 1;
 
-                // Scrolled off the top. A chunk inside a collapsed region never reaches this
-                // branch: the fold is still represented by its first line, whose number is below
-                // the chunk, so it stays at or above the first rendered line instead.
-                if (end < firstVisibleLine)
+                var first = FirstAtOrAfter(visible, startLine);
+
+                if (first == visible.Count || visible[first].LineNumber > endLine)
                 {
+                    // Nothing rendered inside the run. Rendered lines on both sides mean a fold;
+                    // a run above the first or below the last rendered line is simply off screen.
+                    if (first > 0 && first < visible.Count && visible[first - 1].LineNumber < startLine)
+                    {
+                        var foldBottom = visible[first - 1].Bottom;
+
+                        markers.Add(CreateMarker(chunk, palette, foldBottom - CollapsedMarkHeight, CollapsedMarkHeight));
+                    }
+
                     continue;
                 }
 
-                var first = FirstAtOrAfter(visible, start);
+                var index = first;
 
-                if (first < 0)
+                while (index < visible.Count)
                 {
-                    continue; // the whole run sits below the last rendered line
-                }
+                    // ITextViewLine.Top is the coordinate Visual Studio positions the line with,
+                    // relative to the top of the viewport, so it is directly the canvas origin.
+                    // No scroll offset participates in this computation.
+                    var top = Math.Max(0.0, visible[index].Top);
+                    var bottom = visible[index].Bottom;
+                    var lineNumber = visible[index].LineNumber;
+                    var next = index + 1;
 
-                double top;
-                double bottom;
-
-                if (visible[first].LineNumber > end)
-                {
-                    // The run is entirely inside a collapsed region. Point at the fold rather
-                    // than stretching one marker across everything below it.
-                    var fold = first - 1;
-
-                    if (fold < 0)
+                    // Extend over the following lines of the same run. A jump in the line numbers
+                    // is a fold, so it starts a new stretch instead of one block spanning the fold.
+                    while (next < visible.Count
+                           && visible[next].LineNumber == lineNumber + 1
+                           && visible[next].LineNumber <= endLine)
                     {
-                        continue;
+                        bottom = visible[next].Bottom;
+                        lineNumber = visible[next].LineNumber;
+                        next++;
                     }
 
-                    bottom = visible[fold].Bottom;
-                    top = bottom - CollapsedMarkHeight;
-                }
-                else
-                {
-                    // ITextViewLine.Top is already relative to the top of the viewport (the same
-                    // space GetTextViewLineContainingYCoordinate uses), which is exactly the
-                    // canvas origin. Do not add or subtract the scroll offset here: ViewportTop
-                    // is a layout-space value and using it shifts every marker off the gutter.
-                    top = visible[first].Top;
-
-                    if (top < 0.0)
+                    if (viewportHeight > 0)
                     {
-                        top = 0.0; // the first line is partially scrolled out
+                        // A run that continues past the last rendered line fills the view down to
+                        // its bottom edge; one that ends on screen stops at its last line.
+                        var runsOffScreen = next == visible.Count && lineNumber < endLine;
+
+                        bottom = runsOffScreen
+                            ? Math.Max(bottom, viewportHeight)
+                            : Math.Min(bottom, viewportHeight);
                     }
 
-                    var last = LastAtOrBefore(visible, end, first);
+                    markers.Add(CreateMarker(chunk, palette, top, bottom - top));
 
-                    bottom = lastVisibleLine < end ? viewportHeight : visible[last].Bottom;
+                    if (next >= visible.Count || visible[next].LineNumber > endLine)
+                    {
+                        break;
+                    }
+
+                    index = next;
                 }
-
-                if (bottom <= top)
-                {
-                    bottom = top + 2.0;
-                }
-
-                var height = bottom - top;
-
-                if (height < 1.0)
-                {
-                    height = 1.0;
-                }
-                else if (height > 2.0)
-                {
-                    height -= 1.0; // leave a one pixel gap so adjacent runs stay distinguishable
-                }
-
-                var marker = new Rectangle
-                {
-                    Width = MarkerWidth,
-                    Height = height,
-                    Fill = palette.ForKind(chunk.Kind),
-                    RadiusX = 1.5,
-                    RadiusY = 1.5,
-                    ToolTip = Describe(chunk)
-                };
-
-                Canvas.SetLeft(marker, MarkerLeft);
-                Canvas.SetTop(marker, top);
-                markers.Add(marker);
             }
 
             return markers;
+        }
+
+        private static Rectangle CreateMarker(DiffChunk chunk, DiffPalette palette, double top, double height)
+        {
+            var markerHeight = height;
+
+            if (markerHeight < 1.0)
+            {
+                markerHeight = 1.0;
+            }
+            else if (markerHeight > 2.0)
+            {
+                markerHeight -= 1.0; // one pixel gap keeps adjacent runs distinguishable
+            }
+
+            var marker = new Rectangle
+            {
+                Width = MarkerWidth,
+                Height = markerHeight,
+                Fill = palette.ForKind(chunk.Kind),
+                RadiusX = 1.5,
+                RadiusY = 1.5,
+                ToolTip = Describe(chunk)
+            };
+
+            Canvas.SetLeft(marker, MarkerLeft);
+            Canvas.SetTop(marker, top);
+
+            return marker;
         }
 
         /// <summary>
@@ -373,7 +398,7 @@ namespace SamirBoulema.TSVN.Diff
             return visible;
         }
 
-        /// <summary>Index of the first rendered line at or after <paramref name="lineNumber"/>, or -1.</summary>
+        /// <summary>Index of the first rendered line at or after <paramref name="lineNumber"/>, or the count.</summary>
         private static int FirstAtOrAfter(IReadOnlyList<LineSpan> visible, int lineNumber)
         {
             for (var i = 0; i < visible.Count; i++)
@@ -384,20 +409,7 @@ namespace SamirBoulema.TSVN.Diff
                 }
             }
 
-            return -1;
-        }
-
-        /// <summary>Index of the last rendered line at or before <paramref name="lineNumber"/>.</summary>
-        private static int LastAtOrBefore(IReadOnlyList<LineSpan> visible, int lineNumber, int from)
-        {
-            var result = from;
-
-            for (var i = from; i < visible.Count && visible[i].LineNumber <= lineNumber; i++)
-            {
-                result = i;
-            }
-
-            return result;
+            return visible.Count;
         }
 
         private static string Describe(DiffChunk chunk)
