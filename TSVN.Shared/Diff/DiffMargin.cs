@@ -55,6 +55,7 @@ namespace SamirBoulema.TSVN.Diff
         private DiffPalette _palette;
         private bool _disposed;
         private int _retryCount;
+        private bool _settled;
 
         private List<DiffFolds.Range> _folds;
         private ITextSnapshot _foldsSnapshot;
@@ -82,6 +83,8 @@ namespace SamirBoulema.TSVN.Diff
             _retry.Tick += OnRetryTick;
 
             _textView.LayoutChanged += OnLayoutChanged;
+            _textView.ZoomLevelChanged += OnZoomLevelChanged;
+            _textView.ViewportHeightChanged += OnViewportHeightChanged;
             _textView.BackgroundBrushChanged += OnBackgroundBrushChanged;
             _textView.Closed += OnTextViewClosed;
 
@@ -141,6 +144,8 @@ namespace SamirBoulema.TSVN.Diff
             _disposed = true;
 
             _textView.LayoutChanged -= OnLayoutChanged;
+            _textView.ZoomLevelChanged -= OnZoomLevelChanged;
+            _textView.ViewportHeightChanged -= OnViewportHeightChanged;
             _textView.BackgroundBrushChanged -= OnBackgroundBrushChanged;
             _textView.Closed -= OnTextViewClosed;
 
@@ -193,6 +198,20 @@ namespace SamirBoulema.TSVN.Diff
         private void OnBackgroundBrushChanged(object sender, BackgroundBrushChangedEventArgs e)
         {
             _palette = null;
+            Render();
+        }
+
+        private void OnViewportHeightChanged(object sender, EventArgs e)
+        {
+            // A zoom change arrives here as well as through the layout: re-render so the strip is
+            // rescaled even when the line coordinates themselves come out unchanged.
+            Render();
+        }
+
+        private void OnZoomLevelChanged(object sender, ZoomLevelChangedEventArgs e)
+        {
+            // The one signal that says the scale itself changed, including when Visual Studio
+            // restores a non default zoom for the view that is being opened.
             Render();
         }
 
@@ -263,6 +282,11 @@ namespace SamirBoulema.TSVN.Diff
                 // entry here, which is what tells the marker builder that a run is folded away.
                 var visible = BuildVisibleLines(lines);
 
+                // Measured on every render, never remembered: the editor can already be zoomed
+                // when the margin is first composed, so a value read once at the default would
+                // stay wrong until something forced a recalculation.
+                var scale = ViewScale.Resolve(_textView, _canvas);
+                var canvasHeight = ViewScale.ToCanvas(viewportHeight, scale);
                 var shift = -ResolveOrigin(visible, _textView.ViewportTop, viewportHeight);
 
                 if (chunks != null && chunks.Count > 0 && visible.Count > 0)
@@ -271,16 +295,28 @@ namespace SamirBoulema.TSVN.Diff
                         chunks,
                         visible,
                         _palette,
-                        viewportHeight,
+                        canvasHeight,
                         shift,
+                        scale,
                         GetFolds());
+                }
+
+                // A Canvas has no intrinsic size. Without an explicit height the margin container
+                // arranges it at 0x0 and ClipToBounds throws every marker away, which looks exactly
+                // like the margin was never created.
+                _strip.SetHeight(canvasHeight);
+
+                // The first usable layout is not necessarily the final one: a view created while
+                // the editor is still zooming in reports metrics from before the zoom, and no
+                // further layout event follows to correct them. One deferred render, on the timer
+                // that already exists, costs nothing and settles the strip.
+                if (!_settled)
+                {
+                    _settled = true;
+                    RestartRetry();
                 }
             }
 
-            // A Canvas has no intrinsic size. Without an explicit height the margin container
-            // arranges it at 0x0 and ClipToBounds throws every marker away, which looks exactly
-            // like the margin was never created.
-            _strip.SetHeight(viewportHeight);
             _strip.Apply(markers);
         }
 
@@ -376,8 +412,9 @@ namespace SamirBoulema.TSVN.Diff
             IReadOnlyList<DiffChunk> chunks,
             IReadOnlyList<LineSpan> visible,
             DiffPalette palette,
-            double viewportHeight,
+            double canvasHeight,
             double shift,
+            double scale,
             List<DiffFolds.Range> folds)
         {
             var markers = new List<MarkerRect>();
@@ -415,10 +452,11 @@ namespace SamirBoulema.TSVN.Diff
 
                 while (index < visible.Count)
                 {
-                    // The line coordinates are moved onto the canvas by the shift resolved for this
-                    // layout; see ResolveOrigin.
-                    var top = Math.Max(0.0, visible[index].Top + shift);
-                    var bottom = visible[index].Bottom + shift;
+                    // Line coordinates are moved onto the canvas by the origin resolved for this
+                    // layout and then scaled: the text view and the margin are separate visuals,
+                    // and the editor's zoom changes the gap between them.
+                    var top = Math.Max(0.0, ViewScale.ToCanvas(visible[index].Top + shift, scale));
+                    var bottom = ViewScale.ToCanvas(visible[index].Bottom + shift, scale);
                     var lineNumber = visible[index].LineNumber;
                     var next = index + 1;
 
@@ -428,7 +466,7 @@ namespace SamirBoulema.TSVN.Diff
                            && visible[next].LineNumber == lineNumber + 1
                            && visible[next].LineNumber <= endLine)
                     {
-                        bottom = visible[next].Bottom + shift;
+                        bottom = ViewScale.ToCanvas(visible[next].Bottom + shift, scale);
                         lineNumber = visible[next].LineNumber;
                         next++;
                     }
@@ -438,10 +476,10 @@ namespace SamirBoulema.TSVN.Diff
                     var runsOffScreen = next == visible.Count && lineNumber < endLine;
 
                     bottom = runsOffScreen
-                        ? Math.Max(bottom, viewportHeight)
-                        : Math.Min(bottom, viewportHeight);
+                        ? Math.Max(bottom, canvasHeight)
+                        : Math.Min(bottom, canvasHeight);
 
-                    if (bottom > 0.0 && top < viewportHeight)
+                    if (bottom > 0.0 && top < canvasHeight)
                     {
                         markers.Add(new MarkerRect(
                             top,
@@ -459,7 +497,7 @@ namespace SamirBoulema.TSVN.Diff
                 }
             }
 
-            AppendFoldMarkers(markers, folded, visible, palette, viewportHeight, shift);
+            AppendFoldMarkers(markers, folded, visible, palette, canvasHeight, shift, scale);
 
             return markers;
         }
@@ -516,8 +554,9 @@ namespace SamirBoulema.TSVN.Diff
             List<FoldMark> folded,
             IReadOnlyList<LineSpan> visible,
             DiffPalette palette,
-            double viewportHeight,
-            double shift)
+            double canvasHeight,
+            double shift,
+            double scale)
         {
             for (var i = 0; i < folded.Count; i++)
             {
@@ -530,10 +569,10 @@ namespace SamirBoulema.TSVN.Diff
                     continue;
                 }
 
-                var top = Math.Max(0.0, visible[index].Top + shift);
-                var bottom = Math.Min(viewportHeight, visible[index].Bottom + shift);
+                var top = Math.Max(0.0, ViewScale.ToCanvas(visible[index].Top + shift, scale));
+                var bottom = Math.Min(canvasHeight, ViewScale.ToCanvas(visible[index].Bottom + shift, scale));
 
-                if (bottom <= 0.0 || top >= viewportHeight)
+                if (bottom <= 0.0 || top >= canvasHeight)
                 {
                     continue;
                 }

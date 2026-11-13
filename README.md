@@ -114,6 +114,16 @@ the scroll bar nothing but its header, which is why the thumb grows while code i
 Both bars are repainted by moving the rectangles that are already on screen rather than rebuilding
 them, because an empty strip inside a single frame is what reads as a flicker while scrolling.
 
+### Editor zoom
+
+Line coordinates and `ViewportHeight` are in the text view's units, while a margin is a sibling
+visual arranged outside whatever transform the editor applies to its text, so the two spaces drift
+apart in proportion to the distance from the top of the view as soon as the zoom is not 100 %.
+`ViewScale` divides a probe span measured inside the text view by the same span measured inside the
+canvas, which cancels the scroll position and works for any cause, not just zoom. It is measured on
+every render rather than remembered: the zoom is often already restored from the previous session
+when the view opens, so there is no change to react to and a value cached at 100 % would stay wrong.
+
 ### Options
 
 `TortoiseSVN` → `Windows` → `Options` in the main menu bar. The dialog ends with a **Diff

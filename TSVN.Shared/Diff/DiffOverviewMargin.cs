@@ -56,6 +56,8 @@ namespace SamirBoulema.TSVN.Diff
                 VerticalAlignment.Stretch);
 
             _textView.LayoutChanged += OnLayoutChanged;
+            _textView.ZoomLevelChanged += OnZoomLevelChanged;
+            _textView.ViewportHeightChanged += OnViewportHeightChanged;
             _textView.BackgroundBrushChanged += OnBackgroundBrushChanged;
             _textView.Closed += OnTextViewClosed;
 
@@ -100,6 +102,8 @@ namespace SamirBoulema.TSVN.Diff
             _disposed = true;
 
             _textView.LayoutChanged -= OnLayoutChanged;
+            _textView.ZoomLevelChanged -= OnZoomLevelChanged;
+            _textView.ViewportHeightChanged -= OnViewportHeightChanged;
             _textView.BackgroundBrushChanged -= OnBackgroundBrushChanged;
             _textView.Closed -= OnTextViewClosed;
 
@@ -129,6 +133,20 @@ namespace SamirBoulema.TSVN.Diff
         private void OnBackgroundBrushChanged(object sender, BackgroundBrushChangedEventArgs e)
         {
             _palette = null;
+            Render();
+        }
+
+        private void OnViewportHeightChanged(object sender, EventArgs e)
+        {
+            // The strip is stretched to the container, so its height can change without any line
+            // coordinate changing. The mapping depends on that height.
+            Render();
+        }
+
+        private void OnZoomLevelChanged(object sender, ZoomLevelChangedEventArgs e)
+        {
+            // Everything the marks are laid out against - the track, the line height, the canvas
+            // scale - is tied to the zoom, and it can already be non default when the view opens.
             Render();
         }
 
@@ -187,16 +205,22 @@ namespace SamirBoulema.TSVN.Diff
                 var palette = _palette;
                 var folds = GetFolds(snapshot);
 
+                // Measured on every render: the strip is a sibling of the text, so the editor's
+                // zoom stretches one and not the other, and the scroll bar the marks have to line
+                // up with is drawn at the strip's scale.
+                var scale = ViewScale.Resolve(_textView, _strip.Element);
+                var canvasHeight = ViewScale.ToCanvas(height, scale);
+
                 // The scroll bar measures the document in displayed lines: a collapsed region costs
                 // nothing but its header.
                 var displayLines = Math.Max(1, snapshot.LineCount - DiffFolds.HiddenTotal(folds));
-                var visibleLines = Math.Max(1.0, Math.Round(height / GetLineHeight()));
+                var visibleLines = Math.Max(1.0, Math.Round(canvasHeight / ViewScale.ToCanvas(GetLineHeight(), scale)));
 
                 // The document is mapped onto the track minus the thumb, which is exactly the space
                 // the scroll bar has to move the thumb through.
                 var track = displayLines > visibleLines
-                    ? Math.Max(1.0, height * (1.0 - visibleLines / displayLines))
-                    : height;
+                    ? Math.Max(1.0, canvasHeight * (1.0 - visibleLines / displayLines))
+                    : canvasHeight;
 
                 for (var i = 0; i < chunks.Count; i++)
                 {
@@ -213,9 +237,9 @@ namespace SamirBoulema.TSVN.Diff
                         MinimumMarkHeight,
                         (displayEnd - displayStart + 1) / (double)displayLines * track);
 
-                    if (top + markHeight > height)
+                    if (top + markHeight > canvasHeight)
                     {
-                        top = Math.Max(0, height - markHeight);
+                        top = Math.Max(0, canvasHeight - markHeight);
                     }
 
                     marks.Add(new MarkerRect(
