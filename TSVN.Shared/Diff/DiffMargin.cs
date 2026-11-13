@@ -46,7 +46,7 @@ namespace SamirBoulema.TSVN.Diff
         private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(120);
 
         /// <summary>How many diagnostic lines one session may write; see <see cref="Trace"/>.</summary>
-        private const int TraceLimit = 40;
+        private const int TraceLimit = 300;
 
         private static int _traceCount;
 
@@ -54,6 +54,7 @@ namespace SamirBoulema.TSVN.Diff
         private readonly Canvas _canvas;
         private readonly DiffMarkersController _controller;
         private readonly DispatcherTimer _retry;
+        private readonly string _filePath;
 
         private DiffPalette _palette;
         private bool _disposed;
@@ -85,12 +86,27 @@ namespace SamirBoulema.TSVN.Diff
 
             var filePath = GetFilePath(textView.TextBuffer);
 
+            if (string.IsNullOrEmpty(filePath))
+            {
+                // A projection buffer (diff view, peek) carries the document on the underlying
+                // buffer instead of on the one it exposes.
+                filePath = GetFilePath(textView.TextDataModel.DocumentBuffer);
+            }
+
+            _filePath = filePath;
+
             if (!string.IsNullOrEmpty(filePath))
             {
                 _controller = new DiffMarkersController(textView, filePath);
                 _controller.ChunksChanged += OnChunksChanged;
                 _controller.Start();
             }
+
+            Trace(string.Format(
+                CultureInfo.InvariantCulture,
+                "margin created path=\"{0}\" controller={1}",
+                filePath ?? "<none>",
+                _controller == null ? "no" : "yes"));
         }
 
         public event EventHandler Disposed;
@@ -177,6 +193,16 @@ namespace SamirBoulema.TSVN.Diff
 
         private void OnChunksChanged(object sender, EventArgs e)
         {
+            // Logged separately: a chunk list can arrive while the layout is invalid, in which
+            // case Render never reaches its own trace.
+            Trace(string.Format(
+                CultureInfo.InvariantCulture,
+                "chunks changed \"{0}\" n={1}",
+                _filePath ?? "<none>",
+                _controller == null || _controller.Chunks == null
+                    ? "null"
+                    : _controller.Chunks.Count.ToString(CultureInfo.InvariantCulture)));
+
             Render();
         }
 
@@ -234,22 +260,30 @@ namespace SamirBoulema.TSVN.Diff
             _canvas.Width = GutterWidth;
             _canvas.Height = viewportHeight > 0 ? viewportHeight : 1.0;
 
-            var origin = ResolveOrigin(visible, _textView.ViewportTop);
+            var origin = ResolveOrigin(visible, _textView.ViewportTop, viewportHeight);
             var markers = chunks == null || chunks.Count == 0 || visible.Count == 0
                 ? new List<Rectangle>()
                 : BuildMarkers(chunks, visible, _palette, viewportHeight, origin);
 
-            Trace(string.Format(
-                CultureInfo.InvariantCulture,
-                "render chunks={0} visible={1} origin={2} vpTop={3} vpHeight={4} firstLine={5} firstTop={6} markers={7}",
-                chunks == null ? -1 : chunks.Count,
-                visible.Count,
-                origin,
-                _textView.ViewportTop,
-                viewportHeight,
-                visible.Count > 0 ? visible[0].LineNumber : -1,
-                visible.Count > 0 ? visible[0].Top : double.NaN,
-                markers.Count));
+            // Auxiliary views (peek, preview) render at zero height and would otherwise use up the
+            // whole budget before the document view ever logs.
+            if (viewportHeight > 0.0 || _traceCount < 10)
+            {
+                Trace(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "render \"{0}\" controller={1} enabled={2} chunks={3} visible={4} origin={5} vpTop={6} vpHeight={7} firstLine={8} firstTop={9} markers={10}",
+                    _filePath ?? "<none>",
+                    _controller == null ? "no" : "yes",
+                    DiffMarkersState.IsEnabled(_filePath) ? "yes" : "no",
+                    chunks == null ? "null" : chunks.Count.ToString(CultureInfo.InvariantCulture),
+                    visible.Count,
+                    origin,
+                    _textView.ViewportTop,
+                    viewportHeight,
+                    visible.Count > 0 ? visible[0].LineNumber : -1,
+                    visible.Count > 0 ? visible[0].Top : double.NaN,
+                    markers.Count));
+            }
 
             _canvas.Children.Clear();
 
@@ -264,29 +298,49 @@ namespace SamirBoulema.TSVN.Diff
         ///
         /// The documented contract says <see cref="ITextViewLine.Top"/> is relative to the top of
         /// the viewport, but the WPF editor lays its lines out inside a scrolled canvas, where the
-        /// same number is relative to the top of the document instead. Getting this wrong puts
-        /// every marker at a document-sized offset, which simply looks like nothing was drawn.
+        /// same number is relative to the document instead. Getting this wrong puts every marker
+        /// at a document-sized offset, which simply looks like nothing was drawn.
         ///
-        /// The first rendered line sits at the top of the viewport by definition, so whichever
-        /// origin explains its position is the one that applies: if it lands a line's height away
-        /// from <paramref name="viewportTop"/>, the coordinates are document relative and the
-        /// scroll offset has to come off. Otherwise the top of the viewport is the origin.
+        /// Rather than guess from a single line - the editor also renders a line or two beyond
+        /// each edge, which breaks any "the first line must be at zero" check - both candidate
+        /// origins are tried and the one that leaves more rendered lines inside the viewport wins.
         /// </summary>
-        private static double ResolveOrigin(IReadOnlyList<LineSpan> visible, double viewportTop)
+        private static double ResolveOrigin(IReadOnlyList<LineSpan> visible, double viewportTop, double viewportHeight)
         {
-            if (visible.Count == 0 || viewportTop <= 0.0)
+            if (visible.Count == 0 || viewportTop == 0.0 || viewportHeight <= 0.0)
             {
                 return 0.0;
             }
 
-            var height = visible[0].Bottom - visible[0].Top;
+            var viewportRelative = CountLinesInViewport(visible, 0.0, viewportHeight);
 
-            if (height <= 0.0)
+            if (viewportRelative == visible.Count)
             {
-                height = 1.0;
+                return 0.0; // already consistent with the top of the viewport
             }
 
-            return Math.Abs(visible[0].Top - viewportTop) <= height ? viewportTop : 0.0;
+            var documentRelative = CountLinesInViewport(visible, viewportTop, viewportHeight);
+
+            return documentRelative > viewportRelative ? viewportTop : 0.0;
+        }
+
+        /// <summary>How many rendered lines would fall inside the viewport with the given origin.</summary>
+        private static int CountLinesInViewport(IReadOnlyList<LineSpan> visible, double origin, double viewportHeight)
+        {
+            var count = 0;
+
+            for (var i = 0; i < visible.Count; i++)
+            {
+                var top = visible[i].Top - origin;
+                var bottom = visible[i].Bottom - origin;
+
+                if (bottom > 0.0 && top < viewportHeight)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private void RestartRetry()
