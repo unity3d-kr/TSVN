@@ -18,6 +18,15 @@ namespace SamirBoulema.TSVN.Options
         {
             InitializeComponent();
 
+            // The diff marker switches are user scoped and apply immediately: the dialog's OK
+            // button is disabled while no solution is open, and they do not belong to the
+            // solution specific options below.
+            ignoreWhitespaceCheckBox.CheckedChanged += (sender, args) =>
+                DiffMarkersState.IgnoreWhitespace = ignoreWhitespaceCheckBox.Checked;
+
+            showOverviewBarCheckBox.CheckedChanged += (sender, args) =>
+                DiffMarkersState.ShowOverviewBar = showOverviewBarCheckBox.Checked;
+
             Load += new EventHandler(OptionsDialog_Load);
         }
 

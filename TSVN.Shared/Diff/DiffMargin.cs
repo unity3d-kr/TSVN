@@ -189,10 +189,10 @@ namespace SamirBoulema.TSVN.Diff
             var lastVisible = lines.LastVisibleLine.End.GetContainingLine().LineNumber;
             var spans = BuildVisibleSpans(lines);
 
-            // ITextViewLine.Top is measured against the top of the view's layout, while the
-            // canvas origin is the top of the viewport. Subtract the scroll offset, otherwise
-            // the markers drift down as soon as the document is scrolled.
-            var originTop = _textView.ViewportTop;
+            // ITextViewLine.Top is already relative to the top of the viewport (the same space
+            // GetTextViewLineContainingYCoordinate uses), which is exactly the canvas origin.
+            // Do not add or subtract the scroll offset here: ViewportTop is a layout-space
+            // value and using it shifts every marker off the top of the gutter.
             var viewportHeight = _textView.ViewportHeight;
 
             for (var i = 0; i < chunks.Count; i++)
@@ -222,7 +222,7 @@ namespace SamirBoulema.TSVN.Diff
                 }
                 else
                 {
-                    top = span.Top - originTop;
+                    top = span.Top;
                 }
 
                 if (end > lastVisible || !spans.TryGetValue(clampedEnd, out span))
@@ -231,7 +231,7 @@ namespace SamirBoulema.TSVN.Diff
                 }
                 else
                 {
-                    bottom = span.Bottom - originTop;
+                    bottom = span.Bottom;
                 }
 
                 if (bottom <= top)
