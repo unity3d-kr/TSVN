@@ -16,3 +16,9 @@ TSVN.sln.ide/
 
 # Written by build/reinstall.py on every run, success or failure.
 build/install.log
+
+# Written by build/uninstall.vbs, for the report a failed removal shows.
+build/uninstall.log
+
+# Left behind by py_compile and by the build.
+__pycache__

@@ -19,6 +19,7 @@ agent session without a command prompt appearing.
 
     python build/install-vsix.py                 # replace the installed extension
     python build/install-vsix.py --dry-run       # report the plan, change nothing
+    python build/install-vsix.py --uninstall     # take it out again, the same way
 
 The previous folder is moved to %LOCALAPPDATA%\\TSVN\\backups before the swap, and
 is restored automatically if anything fails half way through. Backups are kept
@@ -395,6 +396,57 @@ def clear_caches(root, dry_run):
     return cleared
 
 
+def resolve_target(roots):
+    """
+    (root, folder, message, first_time) for the copy Visual Studio actually loads.
+
+    The registration decides this: a well formed folder anywhere else is never
+    composed, so replacing - or removing - the wrong one changes nothing on screen.
+    """
+    for candidate in roots:
+        registered = registered_install_path(candidate)
+
+        if not registered:
+            continue
+
+        message = (
+            "Replacing installed extension"
+            if os.path.isdir(registered)
+            else "Repairing the registration: the registered folder was missing"
+        )
+        return candidate, registered, message, False
+
+    # Nothing registered. Before falling back to a new folder, check whether the
+    # reason is that the registry cannot be read: an extension installed from
+    # inside Visual Studio after it started is registered in memory only, and
+    # writing a second copy somewhere else would be one more that is ignored.
+    locked = [candidate for candidate in roots if not hive_readable(candidate)]
+    instance, existing = find_installed(roots)
+
+    if locked and existing is not None:
+        message = "Replacing installed extension (registry locked, found by manifest)"
+        return instance, existing, message, False
+
+    root = newest_root(roots) or roots[0]
+
+    return root, new_folder(root), "Installing first time", True
+
+
+def remove(folder, dry_run):
+    """Moves the installed folder out of Extensions, so it can be put back."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup_dir = backup_root()
+    backup = os.path.join(backup_dir, "removed-" + os.path.basename(folder) + "-" + stamp)
+
+    if dry_run:
+        return backup
+
+    os.makedirs(backup_dir, exist_ok=True)
+    shutil.move(folder, backup)
+
+    return backup
+
+
 def main():
     parser = argparse.ArgumentParser(description="Install TSVN into Visual Studio 2022.")
 
@@ -410,14 +462,22 @@ def main():
     )
     parser.add_argument("--dry-run", action="store_true", help="report the plan and change nothing")
     parser.add_argument("--force", action="store_true", help="install even while Visual Studio runs")
+    parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="remove the installed copy instead of installing one",
+    )
+    parser.add_argument(
+        "--log",
+        default=None,
+        help="also write this report to a file, for the windowless launchers",
+    )
     args = parser.parse_args()
 
-    vsix = os.path.abspath(args.vsix)
-
-    if not os.path.isfile(vsix):
-        print("[ERROR] not found: %s" % vsix)
-        print("        run build/build.cmd first, or pass --vsix")
-        return 1
+    if args.log:
+        # Under pythonw.exe there is no stdout at all, so a file is the only way a
+        # failed run can say why. Redirecting keeps every message below unchanged.
+        sys.stdout = open(args.log, "w", encoding="utf-8", errors="replace")
 
     roots = instance_roots()
 
@@ -425,51 +485,26 @@ def main():
         print("[ERROR] no Visual Studio 2022 instance found under %LOCALAPPDATA%\\Microsoft\\VisualStudio")
         return 1
 
+    if args.uninstall:
+        return uninstall_flow(roots, args)
+
+    return install_flow(roots, args)
+
+
+def install_flow(roots, args):
+    vsix = os.path.abspath(args.vsix)
+
+    if not os.path.isfile(vsix):
+        print("[ERROR] not found: %s" % vsix)
+        print("        run build/build.cmd first, or pass --vsix")
+        return 1
+
     if check_stale(vsix, args.assembly):
         print("[ERROR] the archive does not contain the assembly that was just built.")
         print("        repackage it with build/package-vsix.py so the two match.")
         return 1
 
-    root = None
-    folder = None
-    message = None
-
-    # The registration decides the target: it is the only path Visual Studio loads
-    # from, so a folder somewhere else is dead weight even when it is well formed.
-    for candidate in roots:
-        registered = registered_install_path(candidate)
-
-        if not registered:
-            continue
-
-        root = candidate
-        folder = registered
-        message = (
-            "Replacing installed extension"
-            if os.path.isdir(registered)
-            else "Repairing the registration: the registered folder was missing"
-        )
-        break
-
-    if folder is None:
-        # Nothing registered. Before falling back to a new folder, check whether the
-        # reason is that the registry cannot be read: an extension installed from
-        # inside Visual Studio after it started is registered in memory only, and
-        # writing a second copy somewhere else would be one more that is ignored.
-        locked = [candidate for candidate in roots if not hive_readable(candidate)]
-        instance, existing = find_installed(roots)
-
-        if locked and existing is not None:
-            root = instance
-            folder = existing
-            message = "Replacing installed extension (registry locked, found by manifest)"
-
-    first_time = folder is None
-
-    if first_time:
-        root = newest_root(roots) or roots[0]
-        folder = new_folder(root)
-        message = "Installing first time"
+    root, folder, message, first_time = resolve_target(roots)
 
     print("%s:" % message)
     print("  instance : %s" % root)
@@ -515,6 +550,48 @@ def main():
             print("      Studio will probably not compose it. The first install needs")
             print("      VSIXInstaller once, which is what writes that entry; every install")
             print("      after it can come from here.")
+
+    return 0
+
+
+def uninstall_flow(roots, args):
+    """Takes the extension back out, leaving the registration for the next install."""
+    root, folder, _, _ = resolve_target(roots)
+
+    print("Removing the installed extension:")
+    print("  instance : %s" % root)
+    print("  folder   : %s" % folder)
+
+    for stray in stray_copies(root, folder):
+        print("  stray    : %s  (not registered, Visual Studio ignores it)" % stray)
+
+    if not os.path.isdir(folder):
+        print()
+        print("Nothing to remove: no folder is installed at that path.")
+        return 0
+
+    if visual_studio_running() and not args.force and not args.dry_run:
+        print("[ERROR] Visual Studio is running. Close it first, or pass --force.")
+        return 1
+
+    backup = remove(folder, args.dry_run)
+
+    if args.dry_run:
+        print("  backup   : would move it to %s" % backup)
+    else:
+        print("  removed  : %s" % backup)
+
+    for path in clear_caches(root, args.dry_run):
+        print("  cleared  : %s" % path)
+
+    print()
+
+    if args.dry_run:
+        print("Dry run: nothing was changed.")
+    else:
+        print("Done. Visual Studio starts without the extension.")
+        print("The registration entry is deliberately left in place: it costs nothing,")
+        print("and the next install writes to the same folder again.")
 
     return 0
 

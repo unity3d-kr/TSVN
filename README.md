@@ -41,6 +41,14 @@ instead of calling `VSIXInstaller.exe`. That program is a GUI application: it sh
 window, then a result dialog, and it delegates the work to a second process, so `/quiet` removes
 none of it.
 
+It also shows a **console**, which is the window that appears when this extension is installed or
+removed from Visual Studio itself. The copy in a Visual Studio instance starts a second copy from
+`%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\resources\app\ServiceHub\Services\Microsoft.VisualStudio.Setup.Service\`,
+and that one is a console program, so a black window opens for a second whatever switches are
+passed - a defect Microsoft has on file since May 2026 and has not fixed. Nothing in this
+repository can suppress it, because the window belongs to their installer. Install through
+`build\reinstall.vbs` and remove through `build\uninstall.vbs`, and that installer never runs.
+
 An installed extension is a folder holding `extension.vsixmanifest` next to the assembly, but the
 folder alone is not enough. Visual Studio does **not** scan `Extensions\`. It loads the extensions
 named in its private registry (`privateregistry.bin`) and composes their MEF parts from the path
@@ -52,6 +60,18 @@ still needs `VSIXInstaller` once, because creating that entry is what it is for.
 
 The previous folder is kept in `%LOCALAPPDATA%\TSVN\backups`, out of `Extensions` so that it is not
 mistaken for a second installation, and is restored if the archive turns out to be incomplete.
+
+Removing the extension is the same procedure in reverse, and it avoids the installer as well:
+
+```
+build\uninstall.vbs                       # double-click: no window, no prompt
+python build/install-vsix.py --uninstall  # the same, with the output on a terminal
+```
+
+It moves the folder into `%LOCALAPPDATA%\TSVN\backups\removed-<folder>-<stamp>` rather than
+deleting it, so undoing a removal is a copy away, and it clears the component cache so the
+composition is rebuilt without the extension. The registry entry is left alone on purpose: it
+costs nothing while the folder is gone, and the next install writes to that same path again.
 
 ```
 python build/install-vsix.py --dry-run    # show the target folder, change nothing

@@ -92,14 +92,30 @@ still works, and only the editor margins silently never appear. `[ProvideBinding
 
 ## Installing
 
-Double-click the `.vsix`, or:
+Double-click `reinstall.vbs` in this folder - it builds, packages and installs, and opens no
+window - or from a terminal:
 
 ```
-"%ProgramFiles%\Microsoft Visual Studio\2022\<edition>\Common7\IDE\VSIXInstaller.exe" TSVN.VS2022.vsix
+python reinstall.py                    # build, package, install
+python install-vsix.py                 # install only
+python install-vsix.py --uninstall     # remove it again
 ```
 
-`/quiet` does not work from a non-elevated shell: the process exits with code 4 before it
-writes a log. The GUI path is the reliable one.
+To remove the extension, double-click `uninstall.vbs`.
 
-If the menu does not refresh after installing, close Visual Studio and delete
-`%LOCALAPPDATA%\Microsoft\VisualStudio\17.0_*\ComponentModelCache`, then start it again.
+Do **not** install by double-clicking the `.vsix`, and do not use Install or Uninstall in Manage
+Extensions. Both go through `VSIXInstaller.exe`, and the copy inside a Visual Studio instance
+starts a second copy of itself from
+`%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\resources\app\ServiceHub\Services\Microsoft.VisualStudio.Setup.Service\`
+- that one is a console program, so a black window opens whatever switches are passed. It is a
+Microsoft defect with a report from May 2026 still open, and nothing here can suppress a window
+another program creates. `install-vsix.py` instead unpacks the archive into the folder Visual
+Studio already loads from, so the installer is never started.
+
+The first install on a machine with no registration entry yet still needs `VSIXInstaller` once,
+because writing that entry in `privateregistry.bin` is what it exists for; every install after it
+can come from `install-vsix.py`.
+
+If the menu does not refresh, the script already deletes
+`%LOCALAPPDATA%\Microsoft\VisualStudio\17.0_*\ComponentModelCache`; starting Visual Studio then
+rebuilds the composition.
