@@ -48,6 +48,9 @@ namespace SamirBoulema.TSVN.Diff
         /// <summary>How many diagnostic lines one session may write; see <see cref="Trace"/>.</summary>
         private const int TraceLimit = 300;
 
+        /// <summary>Largest container offset treated as a real displacement; see <see cref="ResolveContainerOffset"/>.</summary>
+        private const double MaxContainerOffset = 50.0;
+
         private static int _traceCount;
 
         private readonly IWpfTextView _textView;
@@ -261,9 +264,10 @@ namespace SamirBoulema.TSVN.Diff
             _canvas.Height = viewportHeight > 0 ? viewportHeight : 1.0;
 
             var origin = ResolveOrigin(visible, _textView.ViewportTop, viewportHeight);
+            var shift = ResolveContainerOffset() - origin;
             var markers = chunks == null || chunks.Count == 0 || visible.Count == 0
                 ? new List<Rectangle>()
-                : BuildMarkers(chunks, visible, _palette, viewportHeight, origin);
+                : BuildMarkers(chunks, visible, _palette, viewportHeight, shift);
 
             // Auxiliary views (peek, preview) render at zero height and would otherwise use up the
             // whole budget before the document view ever logs.
@@ -271,13 +275,14 @@ namespace SamirBoulema.TSVN.Diff
             {
                 Trace(string.Format(
                     CultureInfo.InvariantCulture,
-                    "render \"{0}\" controller={1} enabled={2} chunks={3} visible={4} origin={5} vpTop={6} vpHeight={7} firstLine={8} firstTop={9} markers={10}",
+                    "render \"{0}\" controller={1} enabled={2} chunks={3} visible={4} origin={5} shift={6} vpTop={7} vpHeight={8} firstLine={9} firstTop={10} markers={11}",
                     _filePath ?? "<none>",
                     _controller == null ? "no" : "yes",
                     DiffMarkersState.IsEnabled(_filePath) ? "yes" : "no",
                     chunks == null ? "null" : chunks.Count.ToString(CultureInfo.InvariantCulture),
                     visible.Count,
                     origin,
+                    shift,
                     _textView.ViewportTop,
                     viewportHeight,
                     visible.Count > 0 ? visible[0].LineNumber : -1,
@@ -343,6 +348,68 @@ namespace SamirBoulema.TSVN.Diff
             return count;
         }
 
+        /// <summary>
+        /// Vertical distance between the top of the text view and the top of the gutter canvas.
+        ///
+        /// Line coordinates are measured from the text view, while the canvas is arranged by the
+        /// margin container, and those two origins need not coincide - a padding or a one pixel
+        /// border is enough to put every marker a few pixels away from the line it belongs to.
+        /// Measuring the distance removes the guesswork.
+        ///
+        /// Clamped, because a scroll transform on the text view would turn the difference into a
+        /// document sized value; that translation is already handled by the origin.
+        /// </summary>
+        private double ResolveContainerOffset()
+        {
+            try
+            {
+                var textElement = _textView.VisualElement;
+
+                if (textElement == null || _canvas == null)
+                {
+                    return 0.0;
+                }
+
+                var ancestor = FindCommonAncestor(textElement, _canvas);
+
+                if (ancestor == null)
+                {
+                    return 0.0;
+                }
+
+                var textTop = textElement.TransformToAncestor(ancestor).Transform(new Point(0.0, 0.0)).Y;
+                var canvasTop = _canvas.TransformToAncestor(ancestor).Transform(new Point(0.0, 0.0)).Y;
+                var offset = textTop - canvasTop;
+
+                return Math.Abs(offset) <= MaxContainerOffset ? offset : 0.0;
+            }
+            catch (Exception)
+            {
+                // Never let a visual tree quirk take the markers out entirely.
+                return 0.0;
+            }
+        }
+
+        private static Visual FindCommonAncestor(DependencyObject first, DependencyObject second)
+        {
+            var ancestors = new HashSet<DependencyObject>();
+
+            for (var current = first; current != null; current = VisualTreeHelper.GetParent(current))
+            {
+                ancestors.Add(current);
+            }
+
+            for (var current = second; current != null; current = VisualTreeHelper.GetParent(current))
+            {
+                if (ancestors.Contains(current))
+                {
+                    return current as Visual;
+                }
+            }
+
+            return null;
+        }
+
         private void RestartRetry()
         {
             if (_disposed || _retry.IsEnabled || _retryCount >= MaxRetryCount)
@@ -365,7 +432,7 @@ namespace SamirBoulema.TSVN.Diff
             IReadOnlyList<LineSpan> visible,
             DiffPalette palette,
             double viewportHeight,
-            double origin)
+            double shift)
         {
             var markers = new List<Rectangle>();
 
@@ -388,7 +455,7 @@ namespace SamirBoulema.TSVN.Diff
                     // a run above the first or below the last rendered line is simply off screen.
                     if (first > 0 && first < visible.Count && visible[first - 1].LineNumber < startLine)
                     {
-                        var foldBottom = visible[first - 1].Bottom - origin;
+                        var foldBottom = visible[first - 1].Bottom + shift;
 
                         markers.Add(CreateMarker(chunk, palette, foldBottom - CollapsedMarkHeight, CollapsedMarkHeight));
                     }
@@ -400,10 +467,10 @@ namespace SamirBoulema.TSVN.Diff
 
                 while (index < visible.Count)
                 {
-                    // The line coordinates are shifted onto the canvas by the origin resolved for
-                    // this layout; see ResolveOrigin.
-                    var top = Math.Max(0.0, visible[index].Top - origin);
-                    var bottom = visible[index].Bottom - origin;
+                    // The line coordinates are moved onto the canvas by the shift resolved for this
+                    // layout; see ResolveOrigin and ResolveContainerOffset.
+                    var top = Math.Max(0.0, visible[index].Top + shift);
+                    var bottom = visible[index].Bottom + shift;
                     var lineNumber = visible[index].LineNumber;
                     var next = index + 1;
 
@@ -413,7 +480,7 @@ namespace SamirBoulema.TSVN.Diff
                            && visible[next].LineNumber == lineNumber + 1
                            && visible[next].LineNumber <= endLine)
                     {
-                        bottom = visible[next].Bottom - origin;
+                        bottom = visible[next].Bottom + shift;
                         lineNumber = visible[next].LineNumber;
                         next++;
                     }
