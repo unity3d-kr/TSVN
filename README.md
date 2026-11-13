@@ -131,11 +131,14 @@ line instead - the line the editor keeps on screen in place of the folded text -
 any other hidden run on the same header. A run that is merely scrolled out of view produces
 nothing, so there is never a mark floating in the empty space below the end of the file.
 
-The overview bar measures the document in **displayed** lines for the same reason: a fold costs
-the scroll bar nothing but its header, which is why the thumb grows while code is collapsed. Those
-lines are mapped onto the track the thumb actually travels over, `height - thumbHeight`, not onto
-the whole bar: with the bar as the denominator the bottom of the file lands short of the bottom of
-the track, about a hundred pixels short on a document with one large fold.
+The overview bar does **not** model folds. A mark sits at its line's fraction of the document,
+`line / lineCount`, which is the bar's own mapping, and nothing is read from the outlining manager
+while painting. Folding a region does move the lines below it, so a mark drifts by the height of
+the folds above it - but four pixels is read as a map of the file rather than as a second scroll
+bar, and the gutter, where a mark has to sit exactly on its line, still resolves folds from the
+rendered lines. Two attempts at making this bar fold-aware both landed further from the thumb than
+the plain fraction does, and both cost a manager lookup per paint.
+
 Both bars are repainted by moving the rectangles that are already on screen rather than rebuilding
 them, because an empty strip inside a single frame is what reads as a flicker while scrolling.
 
@@ -148,6 +151,9 @@ apart in proportion to the distance from the top of the view as soon as the zoom
 canvas, which cancels the scroll position and works for any cause, not just zoom. It is measured on
 every render rather than remembered: the zoom is often already restored from the previous session
 when the view opens, so there is no change to react to and a value cached at 100 % would stay wrong.
+
+The overview bar needs none of this. It places marks at fractions of its own height, so there is no
+coordinate space to convert - only the gutter mixes the two spaces and has to measure the scale.
 
 ### Options
 

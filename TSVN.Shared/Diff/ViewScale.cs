@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.VisualStudio.Text.Editor;
@@ -9,7 +7,7 @@ using Microsoft.VisualStudio.Text.Editor;
 namespace SamirBoulema.TSVN.Diff
 {
     /// <summary>
-    /// How much of the editor's scale the margins have to undo.
+    /// How much of the editor's scale the gutter has to undo.
     ///
     /// <see cref="ITextViewLine.Top"/> and <see cref="ITextView.ViewportHeight"/> are expressed in
     /// the text view's own units, but a margin is a sibling visual, arranged outside whatever
@@ -22,15 +20,14 @@ namespace SamirBoulema.TSVN.Diff
     /// text view by the same height inside the canvas cancels any translation - the scroll
     /// position is handled by the line origin instead - and covers every other reason the two
     /// spaces can differ, not just zoom.
+    ///
+    /// Only the gutter uses this. The overview bar places its marks at fractions of its own height,
+    /// so there is no second coordinate space for it to convert.
     /// </summary>
     public static class ViewScale
     {
         /// <summary>Span used for the measurement; large enough to beat rounding, arbitrary otherwise.</summary>
         private const double ProbeSpan = 1000.0;
-
-        /// <summary>Last reported pair, so the log only grows when the scale actually changes. Temporary.</summary>
-        private static double _loggedScale = double.NaN;
-        private static double _loggedZoom = double.NaN;
 
         /// <summary>Canvas pixels per text view unit. 1.0 when the two spaces already agree.</summary>
         public static double Resolve(IWpfTextView textView, Visual canvas)
@@ -48,8 +45,6 @@ namespace SamirBoulema.TSVN.Diff
 
                 if (ancestor == null)
                 {
-                    Report(textView, -1.0, -1.0);
-
                     return Fallback(textView);
                 }
 
@@ -58,14 +53,10 @@ namespace SamirBoulema.TSVN.Diff
 
                 if (textSpan <= 0.001 || canvasSpan <= 0.001)
                 {
-                    Report(textView, textSpan, canvasSpan);
-
                     return Fallback(textView);
                 }
 
                 var scale = textSpan / canvasSpan;
-
-                Report(textView, textSpan, canvasSpan);
 
                 return scale > 0.1 && scale < 10.0 ? scale : Fallback(textView);
             }
@@ -74,53 +65,6 @@ namespace SamirBoulema.TSVN.Diff
                 // Not connected to a visual tree yet, or mid layout: the fallback is good enough
                 // until the next layout pass asks again.
                 return Fallback(textView);
-            }
-        }
-
-        /// <summary>
-        /// Writes one line per change of scale or zoom to %LOCALAPPDATA%\TSVN\view-scale.log.
-        ///
-        /// Temporary: it answers whether the editor reports a zoomed layout through the transform
-        /// at all, which decides whether the scale has to be applied here or is already inside the
-        /// line coordinates. Two lines per session, no hot path cost.
-        /// </summary>
-        private static void Report(IWpfTextView textView, double textSpan, double canvasSpan)
-        {
-            var zoom = textView.ZoomLevel;
-            var scale = canvasSpan > 0.001 ? textSpan / canvasSpan : -1.0;
-
-            if (!double.IsNaN(_loggedScale)
-                && Math.Abs(scale - _loggedScale) < 0.0005
-                && Math.Abs(zoom - _loggedZoom) < 0.5)
-            {
-                return;
-            }
-
-            _loggedScale = scale;
-            _loggedZoom = zoom;
-
-            try
-            {
-                var folder = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "TSVN");
-
-                Directory.CreateDirectory(folder);
-
-                File.AppendAllText(
-                    Path.Combine(folder, "view-scale.log"),
-                    string.Format(
-                        CultureInfo.InvariantCulture,
-                        "zoom={0} scale={1:F4} textSpan={2:F1} canvasSpan={3:F1}{4}",
-                        zoom,
-                        scale,
-                        textSpan,
-                        canvasSpan,
-                        Environment.NewLine));
-            }
-            catch (Exception)
-            {
-                // Diagnostics are never a reason to break a margin.
             }
         }
 

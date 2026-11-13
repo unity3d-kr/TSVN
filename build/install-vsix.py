@@ -206,6 +206,21 @@ def registered_install_path(root):
     return best
 
 
+def hive_readable(root):
+    """
+    False while Visual Studio holds its private registry open.
+
+    The hive is written when Visual Studio exits, so while it runs the file on disk
+    is both locked and out of date: a copy installed since it started is not in it
+    yet. "No registration found" then means "cannot look", not "not installed".
+    """
+    try:
+        with open(os.path.join(root, "privateregistry.bin"), "rb"):
+            return True
+    except OSError:
+        return False
+
+
 def stray_copies(root, keep):
     """Folders holding this extension that Visual Studio will not load, because they are not the registered one."""
     found = []
@@ -435,6 +450,19 @@ def main():
             else "Repairing the registration: the registered folder was missing"
         )
         break
+
+    if folder is None:
+        # Nothing registered. Before falling back to a new folder, check whether the
+        # reason is that the registry cannot be read: an extension installed from
+        # inside Visual Studio after it started is registered in memory only, and
+        # writing a second copy somewhere else would be one more that is ignored.
+        locked = [candidate for candidate in roots if not hive_readable(candidate)]
+        instance, existing = find_installed(roots)
+
+        if locked and existing is not None:
+            root = instance
+            folder = existing
+            message = "Replacing installed extension (registry locked, found by manifest)"
 
     first_time = folder is None
 
