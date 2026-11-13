@@ -36,21 +36,10 @@ namespace SamirBoulema.TSVN.Diff
         public IWpfTextViewMargin CreateMargin(IWpfTextViewHost wpfTextViewHost, IWpfTextViewMargin marginContainer)
         {
             var textView = wpfTextViewHost.TextView;
-            IOutliningManager outlining = null;
 
-            try
-            {
-                if (OutliningManagerService != null)
-                {
-                    outlining = OutliningManagerService.GetOutliningManager(textView);
-                }
-            }
-            catch (Exception)
-            {
-                // No outlining support in this view; the margin falls back to rendered lines only.
-            }
-
-            return new DiffMargin(textView, outlining);
+            // The service, not a manager: the editor has no manager yet while the view is being
+            // created, so the margin resolves it on demand instead of holding a null forever.
+            return new DiffMargin(textView, OutliningManagerService);
         }
     }
 }

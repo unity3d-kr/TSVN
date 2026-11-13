@@ -50,7 +50,7 @@ namespace SamirBoulema.TSVN.Diff
         private readonly DiffMarkersController _controller;
         private readonly DispatcherTimer _retry;
         private readonly string _filePath;
-        private readonly IOutliningManager _outlining;
+        private readonly OutlineSource _outlines;
 
         private DiffPalette _palette;
         private bool _disposed;
@@ -60,10 +60,10 @@ namespace SamirBoulema.TSVN.Diff
         private List<DiffFolds.Range> _folds;
         private ITextSnapshot _foldsSnapshot;
 
-        public DiffMargin(IWpfTextView textView, IOutliningManager outlining)
+        public DiffMargin(IWpfTextView textView, IOutliningManagerService outliningService)
         {
             _textView = textView;
-            _outlining = outlining;
+            _outlines = new OutlineSource(textView, outliningService);
 
             _strip = new MarkerStrip(
                 GutterWidth,
@@ -88,10 +88,7 @@ namespace SamirBoulema.TSVN.Diff
             _textView.BackgroundBrushChanged += OnBackgroundBrushChanged;
             _textView.Closed += OnTextViewClosed;
 
-            if (_outlining != null)
-            {
-                _outlining.RegionsChanged += OnRegionsChanged;
-            }
+            _outlines.Changed += OnRegionsChanged;
 
             var filePath = GetFilePath(textView.TextBuffer);
 
@@ -149,10 +146,8 @@ namespace SamirBoulema.TSVN.Diff
             _textView.BackgroundBrushChanged -= OnBackgroundBrushChanged;
             _textView.Closed -= OnTextViewClosed;
 
-            if (_outlining != null)
-            {
-                _outlining.RegionsChanged -= OnRegionsChanged;
-            }
+            _outlines.Changed -= OnRegionsChanged;
+            _outlines.Dispose();
 
             _retry.Stop();
             _retry.Tick -= OnRetryTick;
@@ -220,7 +215,7 @@ namespace SamirBoulema.TSVN.Diff
             Render();
         }
 
-        private void OnRegionsChanged(object sender, RegionsChangedEventArgs e)
+        private void OnRegionsChanged(object sender, EventArgs e)
         {
             // A fold changes which lines are on screen but not the buffer, so the cached ranges have
             // to go before the next layout is mapped.
@@ -331,7 +326,7 @@ namespace SamirBoulema.TSVN.Diff
             }
 
             _foldsSnapshot = snapshot;
-            _folds = DiffFolds.Collect(_outlining, snapshot);
+            _folds = DiffFolds.Collect(_outlines.Manager, snapshot);
 
             return _folds;
         }

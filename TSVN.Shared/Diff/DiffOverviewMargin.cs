@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
+using System.Globalization;
+using System.IO;
 using System.Windows;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
@@ -28,10 +30,13 @@ namespace SamirBoulema.TSVN.Diff
         private const double StripWidth = 4.0;
         private const double MinimumMarkHeight = 2.0;
 
+        /// <summary>Last reported mapping; see <see cref="Report"/>. Temporary.</summary>
+        private static string _reported;
+
         private readonly IWpfTextView _textView;
         private readonly ITextBuffer _buffer;
         private readonly MarkerStrip _strip;
-        private readonly IOutliningManager _outlining;
+        private readonly OutlineSource _outlines;
 
         private DiffPalette _palette;
         private bool _disposed;
@@ -39,11 +44,11 @@ namespace SamirBoulema.TSVN.Diff
         private List<DiffFolds.Range> _folds;
         private ITextSnapshot _foldsSnapshot;
 
-        public DiffOverviewMargin(IWpfTextView textView, IOutliningManager outlining)
+        public DiffOverviewMargin(IWpfTextView textView, IOutliningManagerService outliningService)
         {
             _textView = textView;
             _buffer = textView.TextBuffer;
-            _outlining = outlining;
+            _outlines = new OutlineSource(textView, outliningService);
 
             // Stretched rather than measured: the strip follows the height of the margin container,
             // which is the same height the scroll bar is given.
@@ -64,10 +69,7 @@ namespace SamirBoulema.TSVN.Diff
             DiffChunkCache.Changed += OnChunksChanged;
             DiffMarkersState.Changed += OnStateChanged;
 
-            if (_outlining != null)
-            {
-                _outlining.RegionsChanged += OnRegionsChanged;
-            }
+            _outlines.Changed += OnRegionsChanged;
         }
 
         public event EventHandler Disposed;
@@ -109,11 +111,8 @@ namespace SamirBoulema.TSVN.Diff
 
             DiffChunkCache.Changed -= OnChunksChanged;
             DiffMarkersState.Changed -= OnStateChanged;
-
-            if (_outlining != null)
-            {
-                _outlining.RegionsChanged -= OnRegionsChanged;
-            }
+            _outlines.Changed -= OnRegionsChanged;
+            _outlines.Dispose();
 
             _strip.Clear();
 
@@ -165,7 +164,7 @@ namespace SamirBoulema.TSVN.Diff
             Render();
         }
 
-        private void OnRegionsChanged(object sender, RegionsChangedEventArgs e)
+        private void OnRegionsChanged(object sender, EventArgs e)
         {
             // A fold changes the displayed height of the document, so every mark moves.
             _folds = null;
@@ -248,6 +247,8 @@ namespace SamirBoulema.TSVN.Diff
                         palette.ForKind(chunk.Kind),
                         null));
                 }
+
+                Report(_outlines.Manager != null, folds.Count, DiffFolds.HiddenTotal(folds), displayLines, (int)visibleLines, track, canvasHeight, marks.Count);
             }
 
             _strip.Apply(marks);
@@ -262,9 +263,71 @@ namespace SamirBoulema.TSVN.Diff
             }
 
             _foldsSnapshot = snapshot;
-            _folds = DiffFolds.Collect(_outlining, snapshot);
+            _folds = DiffFolds.Collect(_outlines.Manager, snapshot);
 
             return _folds;
+        }
+
+        /// <summary>
+        /// Writes one line whenever the mapping inputs change, to %LOCALAPPDATA%\TSVN\overview.log.
+        ///
+        /// Temporary: it separates "the folds were never found" from "the folds were found and the
+        /// mapping is wrong", which is the difference between fixing the source and fixing the
+        /// arithmetic. Bounded by the change check, so a session writes a handful of lines.
+        /// </summary>
+        private static void Report(
+            bool hasManager,
+            int folds,
+            int hidden,
+            int displayLines,
+            int visibleLines,
+            double track,
+            double canvasHeight,
+            int marks)
+        {
+            var signature = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}/{1}/{2}/{3}/{4}/{5:F0}/{6:F0}/{7}",
+                hasManager ? 1 : 0,
+                folds,
+                hidden,
+                displayLines,
+                visibleLines,
+                track,
+                canvasHeight,
+                marks);
+
+            if (string.Equals(signature, _reported, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _reported = signature;
+
+            try
+            {
+                var folder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "TSVN");
+
+                Directory.CreateDirectory(folder);
+
+                File.AppendAllText(
+                    Path.Combine(folder, "overview.log"),
+                    "manager=" + (hasManager ? "yes" : "no")
+                    + " folds=" + folds
+                    + " hidden=" + hidden
+                    + " displayLines=" + displayLines
+                    + " visibleLines=" + visibleLines
+                    + " track=" + track.ToString("F1", CultureInfo.InvariantCulture)
+                    + " canvas=" + canvasHeight.ToString("F1", CultureInfo.InvariantCulture)
+                    + " marks=" + marks
+                    + Environment.NewLine);
+            }
+            catch (Exception)
+            {
+                // Diagnostics are never a reason to break a margin.
+            }
         }
 
         /// <summary>Height of one rendered line, used to work out how much of the track the thumb takes.</summary>
@@ -307,21 +370,8 @@ namespace SamirBoulema.TSVN.Diff
         public IWpfTextViewMargin CreateMargin(IWpfTextViewHost wpfTextViewHost, IWpfTextViewMargin marginContainer)
         {
             var textView = wpfTextViewHost.TextView;
-            IOutliningManager outlining = null;
 
-            try
-            {
-                if (OutliningManagerService != null)
-                {
-                    outlining = OutliningManagerService.GetOutliningManager(textView);
-                }
-            }
-            catch (Exception)
-            {
-                // No outlining support in this view; the margin falls back to buffer lines.
-            }
-
-            return new DiffOverviewMargin(textView, outlining);
+            return new DiffOverviewMargin(textView, OutliningManagerService);
         }
     }
 }
