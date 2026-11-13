@@ -31,12 +31,17 @@ namespace SamirBoulema.TSVN.Diff
         private int _generation;
         private bool _forceRefresh;
         private bool _disposed;
+        private bool _lastEnabled;
+        private bool _lastIgnoreWhitespace;
 
         public DiffMarkersController(IWpfTextView textView, string filePath)
         {
             _textView = textView;
             _buffer = textView.TextBuffer;
             _filePath = filePath;
+
+            _lastEnabled = DiffMarkersState.IsEnabled(filePath);
+            _lastIgnoreWhitespace = DiffMarkersState.IgnoreWhitespace;
 
             _debounce = new DispatcherTimer(DispatcherPriority.Background);
             _debounce.Interval = TimeSpan.FromMilliseconds(DebounceMilliseconds);
@@ -86,8 +91,19 @@ namespace SamirBoulema.TSVN.Diff
 
         private void OnStateChanged(object sender, EventArgs e)
         {
-            // The toggle itself asks for a forced refresh because the BASE copy may have
-            // changed underneath us since the last read.
+            // The event is global, so ignore changes that only concern another file.
+            var enabled = DiffMarkersState.IsEnabled(_filePath);
+            var ignoreWhitespace = DiffMarkersState.IgnoreWhitespace;
+
+            if (enabled == _lastEnabled && ignoreWhitespace == _lastIgnoreWhitespace)
+            {
+                return;
+            }
+
+            _lastEnabled = enabled;
+            _lastIgnoreWhitespace = ignoreWhitespace;
+
+            // Forced, because the BASE copy may have changed underneath us since the last read.
             Schedule(true);
         }
 
