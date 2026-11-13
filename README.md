@@ -15,7 +15,9 @@ All the SVN functions quickly accessible from the `TortoiseSVN` menu. It is avai
 
 A customizable toolbar with all your favorite commands.
 
-A pending changes window with the most important commands.
+A pending changes window with the most important commands. On a large working copy the
+`svn status` scan runs with a progress bar and a **Cancel** button, so a slow repository never
+freezes the window.
 
 Change indicators in the editor, see [Diff markers](#diff-markers).
 
@@ -30,8 +32,9 @@ the working copy is cheap but not free, so a file only pays for it once it is sw
 
 > Right-click in the editor → `TortoiseSVN` → `Show Diff Markers`
 
-The command is a checkbox and the choice is remembered per file in
-`%LOCALAPPDATA%\TSVN\diff-markers.json`, so it survives restarts.
+The command is a checkbox. The choice lasts for the current Visual Studio session only: every
+file starts hidden when Visual Studio launches, so opening a large solution never reads `BASE`
+for files that were switched on in an earlier session.
 
 ### How it works
 
@@ -75,8 +78,8 @@ green, matching WinMerge.
 
 ### Options
 
-`TortoiseSVN` → `Options`, either from the editor context menu (right below `Show Diff Markers`)
-or from `Windows` → `Options` in the main menu bar. The dialog ends with a **Diff markers** group:
+`TortoiseSVN` → `Windows` → `Options` in the main menu bar. The dialog ends with a **Diff
+markers** group:
 
 * *Ignore changes that only touch whitespace*
 * *Also mark changed regions next to the scroll bar*

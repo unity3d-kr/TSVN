@@ -31,7 +31,12 @@ namespace SamirBoulema.TSVN.Diff
     /// The markers need a BASE revision of the file, which means reading the pristine copy
     /// out of the working copy the first time a document is opened. That is cheap but not
     /// free, so the feature is off by default and switched on for one file at a time from
-    /// the TortoiseSVN menu. The selection is user scoped and survives restarts.
+    /// the TortoiseSVN menu.
+    ///
+    /// The per-file selection is deliberately session scoped: every file starts hidden when
+    /// Visual Studio launches, otherwise opening a large solution would pay the BASE read for
+    /// every file that was switched on in an earlier session, before the user asked for
+    /// anything. Only the two global switches are remembered.
     /// </summary>
     public static class DiffMarkersState
     {
@@ -222,19 +227,12 @@ namespace SamirBoulema.TSVN.Diff
                     _ignoreWhitespace = settings.IgnoreWhitespace;
                     _showOverviewBar = settings.ShowOverviewBar;
 
-                    if (settings.Files == null)
+                    // Earlier versions remembered the enabled files across sessions. Those
+                    // entries are not honoured any more, and the file is rewritten once so a
+                    // stale list of paths does not linger in %LOCALAPPDATA%.
+                    if (settings.Files != null && settings.Files.Count > 0)
                     {
-                        return;
-                    }
-
-                    foreach (var entry in settings.Files)
-                    {
-                        var normalized = Normalize(entry);
-
-                        if (normalized != null)
-                        {
-                            Files.Add(normalized);
-                        }
+                        Save();
                     }
                 }
                 catch (Exception e)
@@ -254,10 +252,9 @@ namespace SamirBoulema.TSVN.Diff
                 {
                     settings.IgnoreWhitespace = _ignoreWhitespace;
                     settings.ShowOverviewBar = _showOverviewBar;
-                    settings.Files.AddRange(Files);
                 }
 
-                settings.Files.Sort(StringComparer.OrdinalIgnoreCase);
+                // The enabled set is session scoped, so it is never written out.
 
                 var path = StoragePath;
                 var folder = Path.GetDirectoryName(path);

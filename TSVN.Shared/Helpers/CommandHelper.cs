@@ -5,6 +5,7 @@ using System.IO;
 using Process = System.Diagnostics.Process;
 using SamirBoulema.TSVN.Options;
 using System.Threading.Tasks;
+using System.Threading;
 using Microsoft.VisualStudio.Shell;
 using Task = System.Threading.Tasks.Task;
 using Community.VisualStudio.Toolkit;
@@ -29,15 +30,31 @@ namespace SamirBoulema.TSVN.Helpers
         public static async Task ShowDifferences(string filePath)
             => await RunTortoiseSvnFileCommand("diff", filePath: filePath);
 
-        public static async Task<List<string>> GetPendingChanges()
+        /// <summary>
+        /// Runs <c>svn status</c> over <paramref name="repositoryRoot"/> and streams the entry
+        /// count to <paramref name="progress"/> as it arrives.
+        ///
+        /// A large working copy takes a long time here, so the caller can cancel: the process
+        /// tree is killed, which also stops the <c>cmd.exe</c> wrapper, and whatever was read so
+        /// far is discarded by the caller.
+        /// </summary>
+        public static async Task<List<string>> GetPendingChanges(
+            string repositoryRoot,
+            IProgress<int> progress,
+            CancellationToken cancellationToken)
         {
             var pendingChanges = new List<string>();
 
+            if (string.IsNullOrEmpty(repositoryRoot))
+            {
+                return pendingChanges;
+            }
+
+            Process proc = null;
+
             try
             {
-                var repositoryRoot = await GetRepositoryRoot();
-
-                var proc = new Process
+                proc = new Process
                 {
                     StartInfo = new ProcessStartInfo
                     {
@@ -52,17 +69,89 @@ namespace SamirBoulema.TSVN.Helpers
 
                 proc.Start();
 
-                while (!proc.StandardOutput.EndOfStream)
+                // Drained in parallel: an unread stderr pipe blocks the child once it fills up.
+                var errors = proc.StandardError.ReadToEndAsync();
+
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    pendingChanges.Add(await proc.StandardOutput.ReadLineAsync());
+                    var line = await proc.StandardOutput.ReadLineAsync();
+
+                    if (line == null)
+                    {
+                        break;
+                    }
+
+                    pendingChanges.Add(line);
+
+                    if (progress != null && pendingChanges.Count % 25 == 0)
+                    {
+                        progress.Report(pendingChanges.Count);
+                    }
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    KillProcessTree(proc);
+                    pendingChanges.Clear();
+                }
+
+                await errors;
+                proc.WaitForExit(5000);
+            }
+            catch (Exception e)
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    LogHelper.Log("GetPendingChanges", e);
+                }
+            }
+            finally
+            {
+                if (proc != null)
+                {
+                    proc.Dispose();
+                }
+            }
+
+            return pendingChanges;
+        }
+
+        /// <summary>
+        /// Kills <paramref name="proc"/> together with its children. <c>svn.exe</c> runs under
+        /// <c>cmd.exe</c>, so killing the wrapper alone would leave the working copy scan running.
+        /// </summary>
+        private static void KillProcessTree(Process proc)
+        {
+            try
+            {
+                if (proc.HasExited)
+                {
+                    return;
+                }
+
+                var kill = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "taskkill",
+                        Arguments = $"/T /F /PID {proc.Id}",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    }
+                };
+
+                using (kill)
+                {
+                    kill.Start();
+                    kill.WaitForExit(3000);
                 }
             }
             catch (Exception e)
             {
-                LogHelper.Log("GetPendingChanges", e);
+                LogHelper.Log("KillProcessTree", e);
             }
-
-            return pendingChanges;
         }
 
         public static async Task<string> GetRepositoryRoot(string path = "")

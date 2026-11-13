@@ -155,5 +155,21 @@
             </TreeView.Resources>
         </TreeView>
 
+        <!-- Covers the list while svn status runs. Cancel kills the scan and leaves the previous
+             list in place, so a slow working copy never blocks the tool window. -->
+        <Border x:Name="progressPanel" Grid.Row="1" Visibility="Collapsed"
+                Background="{DynamicResource {x:Static vs_shell:EnvironmentColors.ToolWindowBackgroundBrushKey}}">
+            <StackPanel VerticalAlignment="Center" Margin="14,0">
+                <TextBlock x:Name="progressText" Text="Reading svn status..."
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource {x:Static vs_shell:EnvironmentColors.ToolWindowTextBrushKey}}" />
+                <ProgressBar x:Name="progressBar" Height="12" Margin="0,7,0,0"
+                             Minimum="0" Maximum="1" Value="0" IsIndeterminate="True" />
+                <Button x:Name="cancelButton" Content="Cancel" Click="CancelButton_Click"
+                        HorizontalAlignment="Right" Margin="0,9,0,0" Padding="14,3"
+                        BorderThickness="1" Background="Transparent" />
+            </StackPanel>
+        </Border>
+
     </Grid>
 </UserControl>

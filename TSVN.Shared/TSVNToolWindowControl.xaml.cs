@@ -2,9 +2,11 @@
 using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell;
 using SamirBoulema.TSVN.Models;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -20,7 +22,22 @@ namespace SamirBoulema.TSVN
 {
     public partial class TSVNToolWindowControl : UserControl
     {
+        /// <summary>
+        /// Icons are resolved per extension instead of per file. Extracting one costs a shell
+        /// round trip, and a large working copy has thousands of files sharing a handful of
+        /// extensions.
+        /// </summary>
+        private static readonly Dictionary<string, ImageSource> FileIconCache =
+            new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>How many entries are added between two UI yields while the list is built.</summary>
+        private const int TreeBuildBatchSize = 100;
+
         public PendingChangesViewModel ViewModel;
+
+        private CancellationTokenSource _loadCancellation;
+        private bool _busy;
+        private bool _hasRepository;
 
         public TSVNToolWindowControl()
         {
@@ -41,54 +58,211 @@ namespace SamirBoulema.TSVN
 
             HideUnversionedButton.IsChecked = Settings.Default.HideUnversioned;
 
-            Update().FireAndForget();
+            Reload();
         }
 
         private void DocumentEvents_Saved(string obj)
         {
-            Update().FireAndForget();
+            Reload();
         }
 
         private void SolutionEvents_OnAfterOpenSolution1(SolutionItem obj)
         {
-            Update().FireAndForget();
+            Reload();
         }
 
-        private async Task Update()
-            => Update(await CommandHelper.GetPendingChanges(), await CommandHelper.GetRepositoryRoot());
+        private void Reload() => ReloadAsync().FireAndForget();
 
-        public void Update(List<string> pendingChanges, string solutionDir)
+        private void CancelButton_Click(object sender, RoutedEventArgs e)
+        {
+            ReportProgress("Cancelling...", 0, 0);
+            CancelRunningLoad();
+        }
+
+        /// <summary>
+        /// Loads the pending changes with a progress report and a way out. Cancelling kills the
+        /// <c>svn status</c> process tree and leaves the list that is already on screen untouched.
+        /// </summary>
+        private async Task ReloadAsync()
+        {
+            // A save event can arrive while a previous scan is still running.
+            CancelRunningLoad();
+
+            var cts = new CancellationTokenSource();
+            _loadCancellation = cts;
+
+            BeginBusy();
+
+            try
+            {
+                var repositoryRoot = await CommandHelper.GetRepositoryRoot();
+
+                cts.Token.ThrowIfCancellationRequested();
+
+                if (string.IsNullOrEmpty(repositoryRoot))
+                {
+                    ShowTree(new List<string>(), null);
+                    _hasRepository = false;
+                    return;
+                }
+
+                var progress = new Progress<int>(count =>
+                    ReportProgress($"Reading svn status... {count:N0} item(s) found", 0, 0));
+
+                var pendingChanges = await CommandHelper.GetPendingChanges(repositoryRoot, progress, cts.Token);
+
+                cts.Token.ThrowIfCancellationRequested();
+
+                await ShowTreeAsync(pendingChanges, repositoryRoot, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Whatever was on screen before the cancel stays there.
+            }
+            catch (Exception e)
+            {
+                LogHelper.Log("PendingChanges.Reload", e);
+            }
+            finally
+            {
+                if (ReferenceEquals(_loadCancellation, cts))
+                {
+                    _loadCancellation = null;
+                    EndBusy();
+                }
+
+                cts.Dispose();
+            }
+        }
+
+        private void CancelRunningLoad()
+        {
+            var cts = _loadCancellation;
+
+            if (cts == null)
+            {
+                return;
+            }
+
+            try
+            {
+                cts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already finished.
+            }
+        }
+
+        private void BeginBusy()
+        {
+            _busy = true;
+
+            progressPanel.Visibility = Visibility.Visible;
+            progressText.Text = "Reading svn status...";
+            progressBar.IsIndeterminate = true;
+            progressBar.Value = 0;
+
+            commitButton.IsEnabled = false;
+            revertButton.IsEnabled = false;
+            refreshButton.IsEnabled = false;
+        }
+
+        private void EndBusy()
+        {
+            _busy = false;
+
+            progressPanel.Visibility = Visibility.Collapsed;
+            refreshButton.IsEnabled = true;
+            commitButton.IsEnabled = _hasRepository;
+            revertButton.IsEnabled = _hasRepository;
+        }
+
+        private void ReportProgress(string text, double value, double maximum)
+        {
+            if (!_busy)
+            {
+                return;
+            }
+
+            progressText.Text = text;
+
+            if (maximum > 0)
+            {
+                progressBar.IsIndeterminate = false;
+                progressBar.Maximum = maximum;
+                progressBar.Value = Math.Min(value, maximum);
+            }
+            else
+            {
+                progressBar.IsIndeterminate = true;
+            }
+        }
+
+        private async System.Threading.Tasks.Task ShowTreeAsync(
+            List<string> pendingChanges,
+            string solutionDir,
+            CancellationToken cancellationToken)
+        {
+            var solutionDirItem = CreateFolderTreeViewItem(solutionDir, "S");
+
+            for (var i = 0; i < pendingChanges.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                ProcessChange(solutionDirItem, solutionDir, pendingChanges[i]);
+
+                if ((i + 1) % TreeBuildBatchSize != 0)
+                {
+                    continue;
+                }
+
+                ReportProgress(
+                    $"Building the list... {i + 1:N0} / {pendingChanges.Count:N0}",
+                    i + 1,
+                    pendingChanges.Count);
+
+                // Back to the dispatcher so the bar repaints and a Cancel click is handled.
+                await Task.Yield();
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ShowTree(pendingChanges, solutionDir, solutionDirItem);
+        }
+
+        public void ShowTree(List<string> pendingChanges, string solutionDir, TSVNTreeViewFolderItem solutionDirItem = null)
         {
             ViewModel.Root.Clear();
-         
-            if (!string.IsNullOrEmpty(solutionDir))
-            {
-                var root = new TSVNTreeViewFolderItem
-                {
-                    Label = $"Changes ({pendingChanges.Count})",
-                    Foreground = ToBrush(EnvironmentColors.ToolWindowTextColorKey),
-                    IsExpanded = true
-                };
 
-                var solutionDirItem = CreateFolderTreeViewItem(solutionDir, "S");
+            if (string.IsNullOrEmpty(solutionDir))
+            {
+                _hasRepository = false;
+                return;
+            }
+
+            _hasRepository = true;
+
+            var root = new TSVNTreeViewFolderItem
+            {
+                Label = $"Changes ({pendingChanges.Count})",
+                Foreground = ToBrush(EnvironmentColors.ToolWindowTextColorKey),
+                IsExpanded = true
+            };
+
+            if (solutionDirItem == null)
+            {
+                solutionDirItem = CreateFolderTreeViewItem(solutionDir, "S");
 
                 foreach (var change in pendingChanges)
                 {
                     ProcessChange(solutionDirItem, solutionDir, change);
                 }
-
-                root.Items.Add(solutionDirItem);
-
-                ViewModel.Root.Add(root);
-
-                commitButton.IsEnabled = true;
-                revertButton.IsEnabled = true;
             }
-            else
-            {
-                commitButton.IsEnabled = false;
-                revertButton.IsEnabled = false;
-            }
+
+            root.Items.Add(solutionDirItem);
+
+            ViewModel.Root.Add(root);
         }
 
         private void ProcessChange(TSVNTreeViewFolderItem root, string solutionDir, string change)
@@ -157,7 +331,7 @@ namespace SamirBoulema.TSVN
                 ChangeType = GetTypeOfChangeShort(change[0]),
                 PendingIconSource = GetPendingIconOfChange(change[0]),
                 PendingTooltip = GetPendingTooltipOfChange(change[0]),
-                FileIconSource = ToImageSource(Icon.ExtractAssociatedIcon(filePath)),
+                FileIconSource = GetFileIcon(filePath),
                 FileIconVisibility = File.Exists(filePath) ? Visibility.Visible : Visibility.Collapsed,
                 IconVisibility = File.Exists(filePath) ? Visibility.Collapsed : Visibility.Visible,
                 IconSource = "Resources\\XAML\\Document_16x.xaml",
@@ -255,9 +429,7 @@ namespace SamirBoulema.TSVN
 
         private void RevertButton_Click(object sender, RoutedEventArgs e) => CommandHelper.Revert().FireAndForget();
 
-        private void RefreshButton_Click(object sender, RoutedEventArgs e) => Refresh().FireAndForget();
-
-        private async Task Refresh() => Update(await CommandHelper.GetPendingChanges(), await CommandHelper.GetRepositoryRoot());
+        private void RefreshButton_Click(object sender, RoutedEventArgs e) => Reload();
 
         private void HideUnversionedButton_OnChecked(object sender, RoutedEventArgs e) => ToggleUnversioned(true).FireAndForget();
 
@@ -267,7 +439,61 @@ namespace SamirBoulema.TSVN
         {
             Settings.Default.HideUnversioned = hide;
             Settings.Default.Save();
-            Update(await CommandHelper.GetPendingChanges(), await CommandHelper.GetRepositoryRoot());
+            await ReloadAsync();
+        }
+
+        /// <summary>
+        /// Resolves the shell icon for a file, reusing the one already resolved for its extension.
+        /// Extracting an icon is a shell round trip, so a large working copy paid for it thousands
+        /// of times when it only needed one per file type.
+        /// </summary>
+        private static ImageSource GetFileIcon(string filePath)
+        {
+            var key = Path.GetExtension(filePath);
+
+            if (string.IsNullOrEmpty(key))
+            {
+                key = Path.GetFileName(filePath);
+            }
+
+            ImageSource cached;
+
+            if (!string.IsNullOrEmpty(key) && FileIconCache.TryGetValue(key, out cached))
+            {
+                return cached;
+            }
+
+            ImageSource icon = null;
+
+            try
+            {
+                if (File.Exists(filePath))
+                {
+                    using (var extracted = Icon.ExtractAssociatedIcon(filePath))
+                    {
+                        if (extracted != null)
+                        {
+                            icon = ToImageSource(extracted);
+
+                            if (icon != null && icon.CanFreeze)
+                            {
+                                icon.Freeze();
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // A file the shell has no icon for is no reason to stop building the list.
+            }
+
+            if (!string.IsNullOrEmpty(key))
+            {
+                FileIconCache[key] = icon;
+            }
+
+            return icon;
         }
 
         private void TreeView_Collapsed(object sender, RoutedEventArgs e)

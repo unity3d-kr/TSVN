@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -42,6 +44,11 @@ namespace SamirBoulema.TSVN.Diff
         private const int MaxRetryCount = 8;
 
         private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(120);
+
+        /// <summary>How many diagnostic lines one session may write; see <see cref="Trace"/>.</summary>
+        private const int TraceLimit = 40;
+
+        private static int _traceCount;
 
         private readonly IWpfTextView _textView;
         private readonly Canvas _canvas;
@@ -214,7 +221,12 @@ namespace SamirBoulema.TSVN.Diff
             }
 
             var viewportHeight = _textView.ViewportHeight;
-            var markers = BuildMarkers(_controller == null ? null : _controller.Chunks, lines, _palette, viewportHeight);
+            var chunks = _controller == null ? null : _controller.Chunks;
+
+            // Only the rendered lines. A line hidden by a collapsed outlining region has no entry
+            // here, and neither has a line outside the viewport, which is what the marker builder
+            // uses to tell a fold apart from a run that scrolled away.
+            var visible = BuildVisibleLines(lines);
 
             // A Canvas has no intrinsic size. Without an explicit height the margin container
             // arranges it at 0x0 and ClipToBounds throws every marker away, which looks exactly
@@ -222,12 +234,59 @@ namespace SamirBoulema.TSVN.Diff
             _canvas.Width = GutterWidth;
             _canvas.Height = viewportHeight > 0 ? viewportHeight : 1.0;
 
+            var origin = ResolveOrigin(visible, _textView.ViewportTop);
+            var markers = chunks == null || chunks.Count == 0 || visible.Count == 0
+                ? new List<Rectangle>()
+                : BuildMarkers(chunks, visible, _palette, viewportHeight, origin);
+
+            Trace(string.Format(
+                CultureInfo.InvariantCulture,
+                "render chunks={0} visible={1} origin={2} vpTop={3} vpHeight={4} firstLine={5} firstTop={6} markers={7}",
+                chunks == null ? -1 : chunks.Count,
+                visible.Count,
+                origin,
+                _textView.ViewportTop,
+                viewportHeight,
+                visible.Count > 0 ? visible[0].LineNumber : -1,
+                visible.Count > 0 ? visible[0].Top : double.NaN,
+                markers.Count));
+
             _canvas.Children.Clear();
 
             for (var i = 0; i < markers.Count; i++)
             {
                 _canvas.Children.Add(markers[i]);
             }
+        }
+
+        /// <summary>
+        /// Decides which origin the line coordinates are measured from.
+        ///
+        /// The documented contract says <see cref="ITextViewLine.Top"/> is relative to the top of
+        /// the viewport, but the WPF editor lays its lines out inside a scrolled canvas, where the
+        /// same number is relative to the top of the document instead. Getting this wrong puts
+        /// every marker at a document-sized offset, which simply looks like nothing was drawn.
+        ///
+        /// The first rendered line sits at the top of the viewport by definition, so whichever
+        /// origin explains its position is the one that applies: if it lands a line's height away
+        /// from <paramref name="viewportTop"/>, the coordinates are document relative and the
+        /// scroll offset has to come off. Otherwise the top of the viewport is the origin.
+        /// </summary>
+        private static double ResolveOrigin(IReadOnlyList<LineSpan> visible, double viewportTop)
+        {
+            if (visible.Count == 0 || viewportTop <= 0.0)
+            {
+                return 0.0;
+            }
+
+            var height = visible[0].Bottom - visible[0].Top;
+
+            if (height <= 0.0)
+            {
+                height = 1.0;
+            }
+
+            return Math.Abs(visible[0].Top - viewportTop) <= height ? viewportTop : 0.0;
         }
 
         private void RestartRetry()
@@ -249,23 +308,14 @@ namespace SamirBoulema.TSVN.Diff
         /// </summary>
         private static List<Rectangle> BuildMarkers(
             IReadOnlyList<DiffChunk> chunks,
-            ITextViewLineCollection lines,
+            IReadOnlyList<LineSpan> visible,
             DiffPalette palette,
-            double viewportHeight)
+            double viewportHeight,
+            double origin)
         {
             var markers = new List<Rectangle>();
 
-            if (chunks == null || chunks.Count == 0)
-            {
-                return markers;
-            }
-
-            // Only the rendered lines. A line hidden by a collapsed outlining region has no entry
-            // here, and neither has a line outside the viewport, which is exactly what the two
-            // branches below use to tell a fold apart from a run that scrolled away.
-            var visible = BuildVisibleLines(lines);
-
-            if (visible.Count == 0)
+            if (chunks == null || chunks.Count == 0 || visible.Count == 0)
             {
                 return markers;
             }
@@ -284,7 +334,7 @@ namespace SamirBoulema.TSVN.Diff
                     // a run above the first or below the last rendered line is simply off screen.
                     if (first > 0 && first < visible.Count && visible[first - 1].LineNumber < startLine)
                     {
-                        var foldBottom = visible[first - 1].Bottom;
+                        var foldBottom = visible[first - 1].Bottom - origin;
 
                         markers.Add(CreateMarker(chunk, palette, foldBottom - CollapsedMarkHeight, CollapsedMarkHeight));
                     }
@@ -296,11 +346,10 @@ namespace SamirBoulema.TSVN.Diff
 
                 while (index < visible.Count)
                 {
-                    // ITextViewLine.Top is the coordinate Visual Studio positions the line with,
-                    // relative to the top of the viewport, so it is directly the canvas origin.
-                    // No scroll offset participates in this computation.
-                    var top = Math.Max(0.0, visible[index].Top);
-                    var bottom = visible[index].Bottom;
+                    // The line coordinates are shifted onto the canvas by the origin resolved for
+                    // this layout; see ResolveOrigin.
+                    var top = Math.Max(0.0, visible[index].Top - origin);
+                    var bottom = visible[index].Bottom - origin;
                     var lineNumber = visible[index].LineNumber;
                     var next = index + 1;
 
@@ -310,7 +359,7 @@ namespace SamirBoulema.TSVN.Diff
                            && visible[next].LineNumber == lineNumber + 1
                            && visible[next].LineNumber <= endLine)
                     {
-                        bottom = visible[next].Bottom;
+                        bottom = visible[next].Bottom - origin;
                         lineNumber = visible[next].LineNumber;
                         next++;
                     }
@@ -326,7 +375,12 @@ namespace SamirBoulema.TSVN.Diff
                             : Math.Min(bottom, viewportHeight);
                     }
 
-                    markers.Add(CreateMarker(chunk, palette, top, bottom - top));
+                    var offScreen = viewportHeight > 0 && (bottom <= 0.0 || top >= viewportHeight);
+
+                    if (!offScreen)
+                    {
+                        markers.Add(CreateMarker(chunk, palette, top, bottom - top));
+                    }
 
                     if (next >= visible.Count || visible[next].LineNumber > endLine)
                     {
@@ -410,6 +464,34 @@ namespace SamirBoulema.TSVN.Diff
             }
 
             return visible.Count;
+        }
+
+        /// <summary>
+        /// Capped trace of the render inputs, written to %LOCALAPPDATA%\TSVN\diff-markers.log.
+        /// Temporary: it exists to confirm which coordinate space Visual Studio reports on a
+        /// machine that runs a real editor, then it goes away.
+        /// </summary>
+        private static void Trace(string message)
+        {
+            if (Interlocked.Increment(ref _traceCount) > TraceLimit)
+            {
+                return;
+            }
+
+            try
+            {
+                var folder = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "TSVN");
+
+                Directory.CreateDirectory(folder);
+
+                File.AppendAllText(System.IO.Path.Combine(folder, "diff-markers.log"), message + Environment.NewLine);
+            }
+            catch (Exception)
+            {
+                // Diagnostics are never a reason to break the margin.
+            }
         }
 
         private static string Describe(DiffChunk chunk)
