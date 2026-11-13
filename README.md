@@ -18,22 +18,23 @@ Close Visual Studio, then run `build\reinstall.cmd`. It builds the assembly, pac
 `build\install-vsix.py` does the install step alone, and it is worth knowing why it exists
 instead of calling `VSIXInstaller.exe`. That program is a GUI application: it shows a progress
 window, then a result dialog, and it delegates the work to a second process, so `/quiet` removes
-none of it. None of it is necessary either. A VSIX is a zip archive, and an installed extension
-is just a folder holding `extension.vsixmanifest` next to the assembly:
+none of it.
+
+An installed extension is a folder holding `extension.vsixmanifest` next to the assembly, but the
+folder alone is not enough. Visual Studio does **not** scan `Extensions\`. It loads the extensions
+named in its private registry (`privateregistry.bin`) and composes their MEF parts from the path
+each entry points at. Deleting a folder by hand leaves that entry behind, pointing at nothing: the
+extension then disappears without an error, while a new folder under a different name is never
+looked at. So the script reads the registered path out of the hive and writes there, which repairs
+a registration whose folder went missing as well as replacing a live one. A first ever install
+still needs `VSIXInstaller` once, because creating that entry is what it is for.
+
+The previous folder is kept in `%LOCALAPPDATA%\TSVN\backups`, out of `Extensions` so that it is not
+mistaken for a second installation, and is restored if the archive turns out to be incomplete.
 
 ```
-%LOCALAPPDATA%\Microsoft\VisualStudio\17.0_<instance>\Extensions\<folder>\
-```
-
-Visual Studio composes whatever it finds in those folders, so unpacking the archive in place is
-the whole installation. The script does it in process with no child process and no window,
-replaces the existing folder in place rather than adding a second copy, keeps the previous
-version in `%LOCALAPPDATA%\TSVN\backups`, restores it if anything fails, and clears
-`ComponentModelCache` so the new assembly is composed on the next start.
-
-```
-python build/install-vsix.py --dry-run    # resolve the target folder, change nothing
-python build/install-vsix.py              # replace the installed copy
+python build/install-vsix.py --dry-run    # show the target folder, change nothing
+python build/install-vsix.py              # replace the registered copy
 ```
 
 # Features

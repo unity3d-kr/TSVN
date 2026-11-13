@@ -29,6 +29,7 @@ be discovered as a second installation of the same package.
 import argparse
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -118,6 +119,125 @@ def find_installed(roots):
                 return root, folder
 
     return None, None
+
+
+def wide_strings(data, start, end):
+    """(offset, text) of every UTF-16LE printable run inside a byte range."""
+    index = max(0, start)
+    end = min(len(data), end)
+
+    while index < end - 1:
+        if data[index + 1] != 0 or not 0x20 <= data[index] <= 0x7E:
+            index += 1
+            continue
+
+        begin = index
+        text = bytearray()
+
+        while index < len(data) - 1 and data[index + 1] == 0 and 0x20 <= data[index] <= 0x7E:
+            text.append(data[index])
+            index += 2
+
+        if len(text) >= 8:
+            yield begin, text.decode("ascii")
+
+
+def registered_install_path(root):
+    """
+    The install path Visual Studio recorded for this extension, or None.
+
+    Visual Studio does not scan Extensions/ for manifests. It loads the extensions
+    named in its private registry and composes their MEF parts from the folder that
+    entry points at, so a package that is not on that list is never loaded however
+    well formed its folder is. Deleting the folder by hand leaves the entry behind,
+    pointing at nothing, and the extension silently disappears.
+
+    The registry is a hive file, privateregistry.bin, which only an administrator
+    can open, so the path is read straight out of it: the hive stores the install
+    path as a wide string next to the extension's identity, and nothing else in it
+    holds a path of that shape under this instance.
+    """
+    hive = os.path.join(root, "privateregistry.bin")
+
+    if not os.path.isfile(hive):
+        return None
+
+    try:
+        with open(hive, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+
+    extensions = os.path.join(root, "Extensions")
+    pattern = re.compile(
+        r"^[A-Za-z]:\\.*\\Extensions\\([A-Za-z0-9]{8}\.[A-Za-z0-9]{3})\\?$",
+        re.IGNORECASE,
+    )
+    marker = EXTENSION_ID.encode("ascii")
+
+    best = None
+    best_distance = None
+    start = 0
+
+    while True:
+        anchor = data.find(marker, start)
+
+        if anchor < 0:
+            break
+
+        start = anchor + 1
+
+        for offset, text in wide_strings(data, anchor - 2048, anchor + 2048):
+            match = pattern.match(text)
+
+            if not match:
+                continue
+
+            candidate = os.path.join(extensions, match.group(1))
+
+            if os.path.dirname(candidate).lower() != extensions.lower():
+                continue
+
+            distance = abs(offset - anchor)
+
+            if best_distance is None or distance < best_distance:
+                best, best_distance = candidate, distance
+
+    return best
+
+
+def stray_copies(root, keep):
+    """Folders holding this extension that Visual Studio will not load, because they are not the registered one."""
+    found = []
+    extensions = os.path.join(root, "Extensions")
+
+    if not os.path.isdir(extensions):
+        return found
+
+    for name in sorted(os.listdir(extensions)):
+        folder = os.path.join(extensions, name)
+
+        if is_temp(name) or not os.path.isdir(folder):
+            continue
+
+        if keep and os.path.normcase(folder) == os.path.normcase(keep):
+            continue
+
+        manifest = os.path.join(folder, "extension.vsixmanifest")
+
+        if not os.path.isfile(manifest):
+            continue
+
+        try:
+            with open(manifest, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            continue
+
+        if EXTENSION_ID.lower() in text.lower():
+            found.append(folder)
+
+    return found
 
 
 def leftovers(roots):
@@ -295,17 +415,41 @@ def main():
         print("        repackage it with build/package-vsix.py so the two match.")
         return 1
 
-    root, folder = find_installed(roots)
+    root = None
+    folder = None
+    message = None
+
+    # The registration decides the target: it is the only path Visual Studio loads
+    # from, so a folder somewhere else is dead weight even when it is well formed.
+    for candidate in roots:
+        registered = registered_install_path(candidate)
+
+        if not registered:
+            continue
+
+        root = candidate
+        folder = registered
+        message = (
+            "Replacing installed extension"
+            if os.path.isdir(registered)
+            else "Repairing the registration: the registered folder was missing"
+        )
+        break
+
     first_time = folder is None
 
     if first_time:
         root = newest_root(roots) or roots[0]
         folder = new_folder(root)
+        message = "Installing first time"
 
-    print("%s:" % ("Installing first time" if first_time else "Replacing installed extension"))
+    print("%s:" % message)
     print("  instance : %s" % root)
     print("  folder   : %s" % folder)
     print("  archive  : %s" % vsix)
+
+    for stray in stray_copies(root, folder):
+        print("  stray    : %s  (not registered, Visual Studio ignores it)" % stray)
 
     for stale in leftovers(roots):
         print("  leftover : %s  (older script left a second copy here)" % stale)
@@ -336,6 +480,13 @@ def main():
         print("Dry run: nothing was changed.")
     else:
         print("Done. Start Visual Studio 2022 and open a versioned file.")
+
+        if first_time and registered_install_path(root) is None:
+            print()
+            print("NOTE: this instance has no registration for the extension yet, so Visual")
+            print("      Studio will probably not compose it. The first install needs")
+            print("      VSIXInstaller once, which is what writes that entry; every install")
+            print("      after it can come from here.")
 
     return 0
 
