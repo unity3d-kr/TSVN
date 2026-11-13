@@ -13,3 +13,6 @@ TSVN.sln.ide/
 /TSVN/*.user
 /TSVN/*.orig
 /TSVN/*.suo
+
+# Written by build/reinstall.py on every run, success or failure.
+build/install.log

@@ -12,8 +12,29 @@ It also adds **diff markers**: the lines that differ from the `BASE` revision ar
 
 ## Building and installing locally
 
-Close Visual Studio, then run `build\reinstall.cmd`. It builds the assembly, packages
-`build/bin/TSVN.VS2022.vsix` and installs it.
+Close Visual Studio, then double-click `build\reinstall.vbs`. It builds the assembly, packages
+`build/bin/TSVN.VS2022.vsix` and installs it, and it opens **no window at any point**.
+
+That last part takes more than a quiet installer. A `.cmd` always gets a console from Explorer,
+and everything the build runs - `resgen`, `dotnet`, `python` - is a console program that inherits
+it, so the window is back however silent each step is. `build\reinstall.py` therefore owns the
+whole procedure and starts every child with `CREATE_NO_WINDOW`, and `reinstall.vbs` starts it
+through `pythonw.exe`, the GUI interpreter, which has no console to give away. A successful run
+leaves nothing on screen; the summary is in `build\install.log`.
+
+There is no `pause` anywhere, on purpose. A pause is what leaves a console sitting on screen after
+a failure, outliving the reason it appeared - the install refuses while Visual Studio is open, so
+that window had nothing to close it. A failed run shows a single message box with the end of the
+log instead, and writes the whole thing to `build\install.log`.
+
+For the live output, run the console entry points. They call the same script, so the steps are
+identical:
+
+```
+build\reinstall.cmd                 # build, package, install
+build\reinstall.cmd --build-only    # stop after packaging
+build\reinstall.cmd --install-only  # install the archive that is already built
+```
 
 `build\install-vsix.py` does the install step alone, and it is worth knowing why it exists
 instead of calling `VSIXInstaller.exe`. That program is a GUI application: it shows a progress

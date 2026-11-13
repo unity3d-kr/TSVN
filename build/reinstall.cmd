@@ -3,41 +3,22 @@ setlocal EnableExtensions
 rem ---------------------------------------------------------------------------
 rem  Build TSVN.VS2022.dll, package it, and install it into Visual Studio 2022.
 rem
-rem  Close Visual Studio first. Nothing here starts VSIXInstaller: a VSIX is a
-rem  zip and an installed extension is a folder, so build\install-vsix.py unpacks
-rem  it in process and no progress window or result dialog appears.
+rem  This is only a console entry point: reinstall.py does the work, and
+rem  reinstall.vbs runs that without opening a window at all. Use this file when
+rem  you want to watch the output, and reinstall.vbs when you do not.
 rem
-rem  The window stays open only on failure, so an error is still readable after a
-rem  double click. A successful run prints its summary and closes.
+rem  Close Visual Studio first: the installed assembly is in use while it runs.
+rem
+rem  There is deliberately no pause. A pause is what leaves a console sitting on
+rem  screen after a failure, outliving the reason it appeared, and the build is
+rem  fast enough to re-run to read the output again. install.log keeps the record
+rem  either way.
+rem
+rem    reinstall.cmd                 build, package, install
+rem    reinstall.cmd --build-only    stop after packaging
+rem    reinstall.cmd --install-only  install the archive that is already built
 rem ---------------------------------------------------------------------------
 
-set "BUILD=%~dp0"
+python "%~dp0reinstall.py" %*
 
-pushd "%BUILD%"
-
-echo === TSVN build ^& install ===
-echo.
-
-echo ==^> [1/2] Build and package
-call "%BUILD%build.cmd"
-if errorlevel 1 goto :fail
-
-echo.
-echo ==^> [2/2] Install
-python "%BUILD%install-vsix.py"
-if errorlevel 1 goto :fail
-
-popd
-endlocal
-echo.
-echo === DONE ===
-echo Start Visual Studio 2022 and open a versioned file: TortoiseSVN ^> Show Diff Markers.
-exit /b 0
-
-:fail
-popd
-endlocal
-echo.
-echo === FAILED - nothing was installed ===
-pause
-exit /b 1
+exit /b %ERRORLEVEL%
